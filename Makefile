@@ -132,6 +132,11 @@ test-capd-e2e: ## Rebuild the docker provider and run the capd-e2e tests
 	$(MAKE) -C test/infrastructure/docker docker-build REGISTRY=gcr.io/k8s-staging-capi-docker
 	$(MAKE) -C test/infrastructure/docker run-e2e
 
+.PHONY: generate-mocks
+generate-mocks:
+	go generate ./...
+
+
 ## --------------------------------------
 ## Binaries
 ## --------------------------------------

@@ -17,6 +17,7 @@ require (
 	github.com/google/gofuzz v1.1.0
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/imdario/mergo v0.3.8 // indirect
+	github.com/maxbrunsfeld/counterfeiter/v6 v6.2.3 // indirect
 	github.com/onsi/ginkgo v1.12.0
 	github.com/onsi/gomega v1.9.0
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
