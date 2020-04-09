@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
@@ -41,6 +42,7 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	cluster, kcp, genericMachineTemplate := createClusterWithControlPlane()
 	kcp.Spec.Version = "v1.17.3"
 	kcp.Spec.KubeadmConfigSpec.ClusterConfiguration = nil
+	kcp.Spec.Replicas = pointer.Int32Ptr(1)
 
 	fakeClient := newFakeClient(g, cluster.DeepCopy(), kcp.DeepCopy(), genericMachineTemplate.DeepCopy())
 
@@ -49,8 +51,10 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 		Log:      log.Log,
 		recorder: record.NewFakeRecorder(32),
 		managementCluster: &fakeManagementCluster{
-			Management: &internal.Management{Client: fakeClient},
-			Workload:   fakeWorkloadCluster{},
+			Management:          &internal.Management{Client: fakeClient},
+			Workload:            fakeWorkloadCluster{Status: internal.ClusterStatus{Nodes: 1}},
+			ControlPlaneHealthy: true,
+			EtcdHealthy:         true,
 		},
 	}
 	controlPlane := &internal.ControlPlane{
@@ -63,20 +67,43 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	g.Expect(err).NotTo(HaveOccurred())
 
-	machineList := &clusterv1.MachineList{}
-	g.Expect(fakeClient.List(context.Background(), machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
-	g.Expect(machineList.Items).NotTo(BeEmpty())
-	g.Expect(machineList.Items).To(HaveLen(1))
+	// initial setup
+	initialMachine := &clusterv1.MachineList{}
+	g.Expect(fakeClient.List(context.Background(), initialMachine, client.InNamespace(cluster.Namespace))).To(Succeed())
+	g.Expect(initialMachine.Items).To(HaveLen(1))
 
-	machineCollection := internal.NewFilterableMachineCollection(&machineList.Items[0])
-	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, machineCollection, machineCollection, controlPlane)
+	// run upgrade the first time, expect we scale up
+	machineCollection := internal.NewFilterableMachineCollectionFromMachineList(initialMachine)
+	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, machineCollection, controlPlane)
+	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
+	g.Expect(err).To(BeNil())
+	bothMachines := &clusterv1.MachineList{}
+	g.Expect(fakeClient.List(context.Background(), bothMachines, client.InNamespace(cluster.Namespace))).To(Succeed())
+	g.Expect(bothMachines.Items).To(HaveLen(2))
 
-	g.Expect(machineList.Items[0].Annotations).To(HaveKey(controlplanev1.SelectedForUpgradeAnnotation))
-
-	// TODO flesh out the rest of this test - this is currently least-effort to confirm a fix for an NPE when updating
-	// the etcd version
-	g.Expect(result).To(Equal(ctrl.Result{}))
+	// run upgrade a second time, simulate that the node has not appeared yet but the machine exists
+	r.managementCluster.(*fakeManagementCluster).ControlPlaneHealthy = false
+	machineCollection = internal.NewFilterableMachineCollectionFromMachineList(bothMachines)
+	_, err = r.upgradeControlPlane(context.Background(), cluster, kcp, machineCollection, controlPlane)
 	g.Expect(err).To(Equal(&capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}))
+	g.Expect(fakeClient.List(context.Background(), bothMachines, client.InNamespace(cluster.Namespace))).To(Succeed())
+	g.Expect(bothMachines.Items).To(HaveLen(2))
+
+	// manually increase number of nodes, make control plane healthy again
+	r.managementCluster.(*fakeManagementCluster).Workload.Status.Nodes++
+	r.managementCluster.(*fakeManagementCluster).ControlPlaneHealthy = true
+
+	// run upgrade the second time, expect we scale down
+	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, machineCollection, controlPlane)
+	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
+	g.Expect(err).To(BeNil())
+	finalMachine := &clusterv1.MachineList{}
+	g.Expect(fakeClient.List(context.Background(), finalMachine, client.InNamespace(cluster.Namespace))).To(Succeed())
+	g.Expect(finalMachine.Items).To(HaveLen(1))
+
+	// assert that the deleted machine is the oldest, initial machine
+	g.Expect(finalMachine.Items[0].Name).ToNot(Equal(initialMachine.Items[0].Name))
+	g.Expect(finalMachine.Items[0].CreationTimestamp.Time).To(BeTemporally(">", initialMachine.Items[0].CreationTimestamp.Time))
 }
 
 func TestSelectMachineForUpgrade(t *testing.T) {

@@ -214,7 +214,7 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 	// Upgrade takes precedence over other operations
 	if len(requireUpgrade) > 0 {
 		logger.Info("Upgrading Control Plane")
-		return r.upgradeControlPlane(ctx, cluster, kcp, ownedMachines, requireUpgrade, controlPlane)
+		return r.upgradeControlPlane(ctx, cluster, kcp, ownedMachines, controlPlane)
 	}
 
 	// If we've made it this far, we can assume that all ownedMachines are up to date

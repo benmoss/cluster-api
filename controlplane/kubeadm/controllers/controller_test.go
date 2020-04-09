@@ -19,7 +19,9 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -965,7 +967,32 @@ func newFakeClient(g *WithT, initObjs ...runtime.Object) client.Client {
 	g.Expect(clusterv1.AddToScheme(scheme.Scheme)).To(Succeed())
 	g.Expect(bootstrapv1.AddToScheme(scheme.Scheme)).To(Succeed())
 	g.Expect(controlplanev1.AddToScheme(scheme.Scheme)).To(Succeed())
-	return fake.NewFakeClientWithScheme(scheme.Scheme, initObjs...)
+	return &fakeClient{
+		startTime: time.Now(),
+		Client:    fake.NewFakeClientWithScheme(scheme.Scheme, initObjs...),
+	}
+}
+
+type fakeClient struct {
+	startTime time.Time
+	mux       sync.Mutex
+	client.Client
+}
+
+type fakeClientI interface {
+	SetCreationTimestamp(timestamp metav1.Time)
+}
+
+// controller-runtime's fake client doesn't set a CreationTimestamp
+// this sets one that increments by a minute for each object created
+func (c *fakeClient) Create(ctx context.Context, obj runtime.Object, opts ...client.CreateOption) error {
+	if f, ok := obj.(fakeClientI); ok {
+		c.mux.Lock()
+		c.startTime = c.startTime.Add(time.Minute)
+		f.SetCreationTimestamp(metav1.NewTime(c.startTime))
+		c.mux.Unlock()
+	}
+	return c.Client.Create(ctx, obj, opts...)
 }
 
 func createClusterWithControlPlane() (*clusterv1.Cluster, *controlplanev1.KubeadmControlPlane, *unstructured.Unstructured) {
