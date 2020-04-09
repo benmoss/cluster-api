@@ -208,7 +208,7 @@ func TestSelectMachineForUpgrade(t *testing.T) {
 
 			g.Expect(clusterv1.AddToScheme(scheme.Scheme)).To(Succeed())
 
-			selectedMachine, err := r.selectAndMarkMachine(context.Background(), tc.upgradeMachines, controlplanev1.SelectedForUpgradeAnnotation, tc.cp)
+			selectedMachine, err := r.selectAndMarkMachine(context.Background(), tc.upgradeMachines, controlplanev1.DeleteForScaleDownAnnotation, tc.cp)
 
 			if tc.expectErr {
 				g.Expect(err).To(HaveOccurred())
