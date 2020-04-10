@@ -32,7 +32,7 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 	ctx context.Context,
 	cluster *clusterv1.Cluster,
 	kcp *controlplanev1.KubeadmControlPlane,
-	ownedMachines internal.FilterableMachineCollection,
+	needingUpgrade internal.FilterableMachineCollection,
 	controlPlane *internal.ControlPlane,
 ) (ctrl.Result, error) {
 	logger := controlPlane.Logger()
@@ -86,9 +86,10 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 	}
 
 	if status.Nodes <= *kcp.Spec.Replicas {
-		return r.scaleUpControlPlane(ctx, cluster, kcp, ownedMachines, controlPlane)
+		// scaleUp ensures that we don't continue scaling up while waiting for Machines to have NodeRefs
+		return r.scaleUpControlPlane(ctx, cluster, kcp, needingUpgrade, controlPlane)
 	}
-	return r.scaleDownControlPlane(ctx, cluster, kcp, ownedMachines, ownedMachines, controlPlane)
+	return r.scaleDownControlPlane(ctx, cluster, kcp, needingUpgrade, needingUpgrade, controlPlane)
 }
 
 func (r *KubeadmControlPlaneReconciler) selectAndMarkMachine(ctx context.Context, machines internal.FilterableMachineCollection, annotation string, controlPlane *internal.ControlPlane) (*clusterv1.Machine, error) {

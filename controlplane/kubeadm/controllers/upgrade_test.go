@@ -73,8 +73,8 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	g.Expect(initialMachine.Items).To(HaveLen(1))
 
 	// run upgrade the first time, expect we scale up
-	machineCollection := internal.NewFilterableMachineCollectionFromMachineList(initialMachine)
-	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, machineCollection, controlPlane)
+	needingUpgrade := internal.NewFilterableMachineCollectionFromMachineList(initialMachine)
+	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, needingUpgrade, controlPlane)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	g.Expect(err).To(BeNil())
 	bothMachines := &clusterv1.MachineList{}
@@ -83,8 +83,7 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 
 	// run upgrade a second time, simulate that the node has not appeared yet but the machine exists
 	r.managementCluster.(*fakeManagementCluster).ControlPlaneHealthy = false
-	machineCollection = internal.NewFilterableMachineCollectionFromMachineList(bothMachines)
-	_, err = r.upgradeControlPlane(context.Background(), cluster, kcp, machineCollection, controlPlane)
+	_, err = r.upgradeControlPlane(context.Background(), cluster, kcp, needingUpgrade, controlPlane)
 	g.Expect(err).To(Equal(&capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}))
 	g.Expect(fakeClient.List(context.Background(), bothMachines, client.InNamespace(cluster.Namespace))).To(Succeed())
 	g.Expect(bothMachines.Items).To(HaveLen(2))
@@ -94,7 +93,7 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	r.managementCluster.(*fakeManagementCluster).ControlPlaneHealthy = true
 
 	// run upgrade the second time, expect we scale down
-	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, machineCollection, controlPlane)
+	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, needingUpgrade, controlPlane)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	g.Expect(err).To(BeNil())
 	finalMachine := &clusterv1.MachineList{}
