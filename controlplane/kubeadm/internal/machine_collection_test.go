@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 )
 
@@ -50,6 +51,58 @@ var _ = Describe("Machine Collection", func() {
 				Expect(sortedMachines[0].Name).To(Equal("machine-1"))
 				Expect(sortedMachines[len(sortedMachines)-1].Name).To(Equal("machine-5"))
 			})
+		})
+	})
+
+	Describe("MachineCollectionByFailureDomain", func() {
+		It("allows access by failure domain", func() {
+			mc := NewFilterableMachineCollectionByFailureDomain(
+				clusterv1.FailureDomains{
+					"one": clusterv1.FailureDomainSpec{ControlPlane: true},
+					"two": clusterv1.FailureDomainSpec{ControlPlane: true},
+				},
+				NewFilterableMachineCollection(
+					machine("machine-1", withFailureDomain("one")),
+					machine("machine-2", withFailureDomain("one")),
+					machine("machine-3", withFailureDomain("two")),
+				),
+			)
+			Expect(mc.ByLargestDomain()).To(Equal(mc.Filter(func(m *clusterv1.Machine) bool {
+				return m.ObjectMeta.Name == "machine-1" || m.ObjectMeta.Name == "machine-2"
+			})))
+			Expect(mc.BySmallestDomain()).To(Equal(mc.Filter(func(m *clusterv1.Machine) bool {
+				return m.ObjectMeta.Name == "machine-3"
+			})))
+			Expect(mc.LargestDomain()).To(Equal(pointer.StringPtr("one")))
+			Expect(mc.SmallestDomain()).To(Equal(pointer.StringPtr("two")))
+		})
+
+		It("keeps unknown and nil domains separate", func() {
+			mc := NewFilterableMachineCollectionByFailureDomain(
+				clusterv1.FailureDomains{
+					"one": clusterv1.FailureDomainSpec{ControlPlane: true},
+					"two": clusterv1.FailureDomainSpec{ControlPlane: true},
+				},
+				NewFilterableMachineCollection(
+					machine("machine-1", withFailureDomain("one")),
+					machine("machine-2", withFailureDomain("one")),
+					machine("machine-3", withFailureDomain("two")),
+					machine("machine-4", withFailureDomain("got me")),
+					machine("machine-5", withFailureDomain("who knows")),
+					machine("machine-6"),
+				),
+			)
+			Expect(mc.ByLargestDomain()).To(Equal(mc.Filter(func(m *clusterv1.Machine) bool {
+				return m.ObjectMeta.Name == "machine-1" || m.ObjectMeta.Name == "machine-2"
+			})))
+			Expect(mc.BySmallestDomain()).To(Equal(mc.Filter(func(m *clusterv1.Machine) bool {
+				return m.ObjectMeta.Name == "machine-3"
+			})))
+			Expect(mc.LargestDomain()).To(Equal(pointer.StringPtr("one")))
+			Expect(mc.SmallestDomain()).To(Equal(pointer.StringPtr("two")))
+			Expect(mc.ByUnknownDomains()).To(Equal(mc.Filter(func(m *clusterv1.Machine) bool {
+				return m.ObjectMeta.Name == "machine-4" || m.ObjectMeta.Name == "machine-5" || m.ObjectMeta.Name == "machine-6"
+			})))
 		})
 	})
 })

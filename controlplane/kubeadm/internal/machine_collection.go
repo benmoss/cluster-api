@@ -30,6 +30,7 @@ package internal
 import (
 	"sort"
 
+	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
 	"sigs.k8s.io/cluster-api/util"
@@ -145,4 +146,107 @@ func (s FilterableMachineCollection) DeepCopy() FilterableMachineCollection {
 		result.Insert(m.DeepCopy())
 	}
 	return result
+}
+
+// ByFailureDomains is an alternate constructor for a MachineCollectionByFailureDomain
+func (s FilterableMachineCollection) ByFailureDomains(failureDomains clusterv1.FailureDomains) MachineCollectionByFailureDomain {
+	return NewFilterableMachineCollectionByFailureDomain(failureDomains, s)
+}
+
+// MachineCollectionByFailureDomain is a FilterableMachineCollection with added behavior for failure domains
+// FilterableMachineCollection methods still work as it retains the FMC for those operations
+type MachineCollectionByFailureDomain struct {
+	FilterableMachineCollection
+	failureDomains clusterv1.FailureDomains
+	byFD           map[*string]FilterableMachineCollection
+	unknowns       FilterableMachineCollection
+}
+
+// NewFilterableMachineCollectionByFailureDomain takes a set of failure domains
+// and a set of machines and returns a collection with specialized functions
+// for working on machines aggregated by failure domain
+func NewFilterableMachineCollectionByFailureDomain(failureDomains clusterv1.FailureDomains, s FilterableMachineCollection) MachineCollectionByFailureDomain {
+	mc := MachineCollectionByFailureDomain{
+		failureDomains:              failureDomains,
+		byFD:                        map[*string]FilterableMachineCollection{},
+		FilterableMachineCollection: s,
+	}
+	// handle known failureDomains
+	for name := range failureDomains {
+		byFD := s.Filter(func(m *clusterv1.Machine) bool {
+			return m.Spec.FailureDomain != nil && *m.Spec.FailureDomain == name
+		})
+		mc.byFD[pointer.StringPtr(name)] = byFD
+	}
+	// handle nil failureDomains
+	mc.unknowns = s.Filter(func(m *clusterv1.Machine) bool {
+		return m.Spec.FailureDomain == nil
+	})
+	// handle unknown failureDomains
+	for _, m := range s.Filter(func(m *clusterv1.Machine) bool {
+		if m.Spec.FailureDomain == nil {
+			return false
+		}
+		if _, ok := failureDomains[*m.Spec.FailureDomain]; !ok {
+			return true
+		}
+		return false
+	}).Items() {
+		mc.unknowns.Insert(m)
+	}
+	return mc
+}
+
+// ByLargestDomain returns a FilterableMachineCollection of machines in the
+// largest failure domain.  It will not return unknown domains.
+func (f *MachineCollectionByFailureDomain) ByLargestDomain() FilterableMachineCollection {
+	return f.byFD[f.LargestDomain()]
+}
+
+// BySmallestDomain returns a FilterableMachineCollection of machines in the
+// smallest failure domain. It will not return unknown domains.
+func (f *MachineCollectionByFailureDomain) BySmallestDomain() FilterableMachineCollection {
+	return f.byFD[f.SmallestDomain()]
+}
+
+// ByUnknownDomains returns a FilterableMachineCollection of machines that are
+// not in the list of FailureDomains provided to this collection
+func (f *MachineCollectionByFailureDomain) ByUnknownDomains() FilterableMachineCollection {
+	return f.unknowns
+}
+
+// ByLargestDomain returns the name of the failure domain with the most machines.
+// It will not return unknown domains.
+func (f *MachineCollectionByFailureDomain) LargestDomain() *string {
+	var largestName *string
+	var largest int
+	for name, byFD := range f.byFD {
+		if byFD.Len() > largest {
+			largest = byFD.Len()
+			largestName = name
+		}
+	}
+	return largestName
+}
+
+// BySmallestDomain returns the name of the failure domain with the least machines.
+// It will not return unknown domains.
+func (f *MachineCollectionByFailureDomain) SmallestDomain() *string {
+	var smallestName *string
+	var smallest int
+	for name, byFD := range f.byFD {
+		// handle the first loop, when smallest is a default value
+		if smallest == 0 {
+			smallest = byFD.Len()
+			smallestName = name
+
+			continue
+		}
+
+		if byFD.Len() < smallest {
+			smallest = byFD.Len()
+			smallestName = name
+		}
+	}
+	return smallestName
 }
