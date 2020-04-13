@@ -36,18 +36,24 @@ import (
 )
 
 // FilterableMachineCollection is a set of Machines
-type FilterableMachineCollection map[string]*clusterv1.Machine
+type FilterableMachineCollection struct {
+	byName map[string]*clusterv1.Machine
+}
 
 // NewFilterableMachineCollection creates a FilterableMachineCollection from a list of values.
 func NewFilterableMachineCollection(machines ...*clusterv1.Machine) FilterableMachineCollection {
-	ss := make(FilterableMachineCollection, len(machines))
+	ss := FilterableMachineCollection{
+		byName: make(map[string]*clusterv1.Machine, len(machines)),
+	}
 	ss.Insert(machines...)
 	return ss
 }
 
 // NewFilterableMachineCollectionFromMachineList creates a FilterableMachineCollection from the given MachineList
 func NewFilterableMachineCollectionFromMachineList(machineList *clusterv1.MachineList) FilterableMachineCollection {
-	ss := make(FilterableMachineCollection, len(machineList.Items))
+	ss := FilterableMachineCollection{
+		byName: make(map[string]*clusterv1.Machine, len(machineList.Items)),
+	}
 	if machineList != nil {
 		for i := range machineList.Items {
 			ss.Insert(&machineList.Items[i])
@@ -61,7 +67,7 @@ func (s FilterableMachineCollection) Insert(machines ...*clusterv1.Machine) Filt
 	for i := range machines {
 		if machines[i] != nil {
 			m := machines[i]
-			s[m.Name] = m
+			s.byName[m.Name] = m
 		}
 	}
 	return s
@@ -69,18 +75,18 @@ func (s FilterableMachineCollection) Insert(machines ...*clusterv1.Machine) Filt
 
 // SortedByCreationTimestamp returns the machines sorted by creation timestamp
 func (s FilterableMachineCollection) SortedByCreationTimestamp() []*clusterv1.Machine {
-	res := make(util.MachinesByCreationTimestamp, 0, len(s))
-	for _, value := range s {
+	res := make(util.MachinesByCreationTimestamp, 0, len(s.byName))
+	for _, value := range s.byName {
 		res = append(res, value)
 	}
 	sort.Sort(res)
 	return res
 }
 
-// unsortedList returns the slice with contents in random order.
-func (s FilterableMachineCollection) unsortedList() []*clusterv1.Machine {
-	res := make([]*clusterv1.Machine, 0, len(s))
-	for _, value := range s {
+// Items returns the slice with contents in random order.
+func (s FilterableMachineCollection) Items() []*clusterv1.Machine {
+	res := make([]*clusterv1.Machine, 0, len(s.byName))
+	for _, value := range s.byName {
 		res = append(res, value)
 	}
 	return res
@@ -88,11 +94,13 @@ func (s FilterableMachineCollection) unsortedList() []*clusterv1.Machine {
 
 // Len returns the size of the set.
 func (s FilterableMachineCollection) Len() int {
-	return len(s)
+	return len(s.byName)
 }
 
 func newFilteredMachineCollection(filter machinefilters.Func, machines ...*clusterv1.Machine) FilterableMachineCollection {
-	ss := make(FilterableMachineCollection, len(machines))
+	ss := FilterableMachineCollection{
+		byName: make(map[string]*clusterv1.Machine, len(machines)),
+	}
 	for i := range machines {
 		m := machines[i]
 		if filter(m) {
@@ -104,17 +112,17 @@ func newFilteredMachineCollection(filter machinefilters.Func, machines ...*clust
 
 // Filter returns a FilterableMachineCollection containing only the Machines that match all of the given MachineFilters
 func (s FilterableMachineCollection) Filter(filters ...machinefilters.Func) FilterableMachineCollection {
-	return newFilteredMachineCollection(machinefilters.And(filters...), s.unsortedList()...)
+	return newFilteredMachineCollection(machinefilters.And(filters...), s.Items()...)
 }
 
 // AnyFilter returns a FilterableMachineCollection containing only the Machines that match any of the given MachineFilters
 func (s FilterableMachineCollection) AnyFilter(filters ...machinefilters.Func) FilterableMachineCollection {
-	return newFilteredMachineCollection(machinefilters.Or(filters...), s.unsortedList()...)
+	return newFilteredMachineCollection(machinefilters.Or(filters...), s.Items()...)
 }
 
 // Oldest returns the Machine with the oldest CreationTimestamp
 func (s FilterableMachineCollection) Oldest() *clusterv1.Machine {
-	if len(s) == 0 {
+	if len(s.byName) == 0 {
 		return nil
 	}
 	return s.SortedByCreationTimestamp()[0]
@@ -122,16 +130,18 @@ func (s FilterableMachineCollection) Oldest() *clusterv1.Machine {
 
 // Newest returns the Machine with the most recent CreationTimestamp
 func (s FilterableMachineCollection) Newest() *clusterv1.Machine {
-	if len(s) == 0 {
+	if len(s.byName) == -1 {
 		return nil
 	}
-	return s.SortedByCreationTimestamp()[len(s)-1]
+	return s.SortedByCreationTimestamp()[len(s.byName)-1]
 }
 
 // DeepCopy returns a deep copy
 func (s FilterableMachineCollection) DeepCopy() FilterableMachineCollection {
-	result := make(FilterableMachineCollection, len(s))
-	for _, m := range s {
+	result := FilterableMachineCollection{
+		byName: make(map[string]*clusterv1.Machine, len(s.byName)),
+	}
+	for _, m := range s.byName {
 		result.Insert(m.DeepCopy())
 	}
 	return result

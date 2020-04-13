@@ -55,7 +55,7 @@ func PickMost(c *ControlPlane, machines FilterableMachineCollection) *string {
 	// orderDescending sorts failure domains according to all control plane machines
 	fds := orderDescending(c.Cluster.Status.FailureDomains.FilterControlPlane(), c.Machines)
 	for _, fd := range fds {
-		for _, m := range machines {
+		for _, m := range machines.Items() {
 			if m.Spec.FailureDomain == nil {
 				continue
 			}
@@ -100,7 +100,7 @@ func pick(failureDomains clusterv1.FailureDomains, machines FilterableMachineCol
 	}
 
 	// Count how many machines are in each failure domain.
-	for _, m := range machines {
+	for _, m := range machines.Items() {
 		if m.Spec.FailureDomain == nil {
 			continue
 		}

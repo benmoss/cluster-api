@@ -47,11 +47,11 @@ var _ = Describe("Control Plane", func() {
 
 	Describe("Failure domains", func() {
 		BeforeEach(func() {
-			controlPlane.Machines = FilterableMachineCollection{
-				"machine-1": machine("machine-1", withFailureDomain("one")),
-				"machine-2": machine("machine-2", withFailureDomain("two")),
-				"machine-3": machine("machine-3", withFailureDomain("two")),
-			}
+			controlPlane.Machines = NewFilterableMachineCollection(
+				machine("machine-1", withFailureDomain("one")),
+				machine("machine-2", withFailureDomain("two")),
+				machine("machine-3", withFailureDomain("two")),
+			)
 			controlPlane.Cluster.Status.FailureDomains = clusterv1.FailureDomains{
 				"one":   failureDomain(true),
 				"two":   failureDomain(true),
@@ -89,18 +89,18 @@ var _ = Describe("Control Plane", func() {
 	Describe("MachinesNeedingUpgrade", func() {
 		Context("With no machines", func() {
 			It("should return no machines", func() {
-				Expect(controlPlane.MachinesNeedingUpgrade()).To(HaveLen(0))
+				Expect(controlPlane.MachinesNeedingUpgrade().Len()).To(Equal(0))
 			})
 		})
 
 		Context("With machines", func() {
 			BeforeEach(func() {
 				controlPlane.KCP.Spec.Version = "2"
-				controlPlane.Machines = FilterableMachineCollection{
-					"machine-1": machine("machine-1", withHash(controlPlane.SpecHash())),
-					"machine-2": machine("machine-2", withHash(controlPlane.SpecHash())),
-					"machine-3": machine("machine-3", withHash(controlPlane.SpecHash())),
-				}
+				controlPlane.Machines = NewFilterableMachineCollection(
+					machine("machine-1", withHash(controlPlane.SpecHash())),
+					machine("machine-2", withHash(controlPlane.SpecHash())),
+					machine("machine-3", withHash(controlPlane.SpecHash())),
+				)
 			})
 
 			Context("That have an old configuration", func() {
@@ -108,29 +108,29 @@ var _ = Describe("Control Plane", func() {
 					controlPlane.Machines.Insert(machine("machine-4", withHash(controlPlane.SpecHash()+"outdated")))
 				})
 				It("should return some machines", func() {
-					Expect(controlPlane.MachinesNeedingUpgrade()).To(HaveLen(1))
+					Expect(controlPlane.MachinesNeedingUpgrade().Len()).To(Equal(1))
 				})
 			})
 
 			Context("That have an up-to-date configuration", func() {
 				year := 2000
 				BeforeEach(func() {
-					controlPlane.Machines = FilterableMachineCollection{
-						"machine-1": machine("machine-1",
+					controlPlane.Machines = NewFilterableMachineCollection(
+						machine("machine-1",
 							withCreationTimestamp(metav1.Time{Time: time.Date(year-1, 0, 0, 0, 0, 0, 0, time.UTC)}),
 							withHash(controlPlane.SpecHash())),
-						"machine-2": machine("machine-2",
+						machine("machine-2",
 							withCreationTimestamp(metav1.Time{Time: time.Date(year, 0, 0, 0, 0, 0, 0, time.UTC)}),
 							withHash(controlPlane.SpecHash())),
-						"machine-3": machine("machine-3",
+						machine("machine-3",
 							withCreationTimestamp(metav1.Time{Time: time.Date(year+1, 0, 0, 0, 0, 0, 0, time.UTC)}),
 							withHash(controlPlane.SpecHash())),
-					}
+					)
 				})
 
 				Context("That has no upgradeAfter value set", func() {
 					It("should return no machines", func() {
-						Expect(controlPlane.MachinesNeedingUpgrade()).To(HaveLen(0))
+						Expect(controlPlane.MachinesNeedingUpgrade().Len()).To(Equal(0))
 					})
 				})
 
@@ -141,7 +141,7 @@ var _ = Describe("Control Plane", func() {
 							controlPlane.KCP.Spec.UpgradeAfter = &metav1.Time{Time: future}
 						})
 						It("should return no machines", func() {
-							Expect(controlPlane.MachinesNeedingUpgrade()).To(HaveLen(0))
+							Expect(controlPlane.MachinesNeedingUpgrade().Len()).To(Equal(0))
 						})
 					})
 
@@ -151,7 +151,7 @@ var _ = Describe("Control Plane", func() {
 								controlPlane.KCP.Spec.UpgradeAfter = &metav1.Time{Time: time.Date(year-2, 0, 0, 0, 0, 0, 0, time.UTC)}
 							})
 							It("should return no machines", func() {
-								Expect(controlPlane.MachinesNeedingUpgrade()).To(HaveLen(0))
+								Expect(controlPlane.MachinesNeedingUpgrade().Len()).To(Equal(0))
 							})
 						})
 
@@ -160,7 +160,7 @@ var _ = Describe("Control Plane", func() {
 								controlPlane.KCP.Spec.UpgradeAfter = &metav1.Time{Time: time.Date(year, 1, 0, 0, 0, 0, 0, time.UTC)}
 							})
 							It("should return all machines older than this date machines", func() {
-								Expect(controlPlane.MachinesNeedingUpgrade()).To(HaveLen(2))
+								Expect(controlPlane.MachinesNeedingUpgrade().Len()).To(Equal(2))
 							})
 						})
 					})

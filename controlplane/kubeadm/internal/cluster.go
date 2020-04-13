@@ -57,7 +57,7 @@ func (m *Management) GetMachinesForCluster(ctx context.Context, cluster client.O
 	}
 	ml := &clusterv1.MachineList{}
 	if err := m.Client.List(ctx, ml, client.InNamespace(cluster.Namespace), client.MatchingLabels(selector)); err != nil {
-		return nil, errors.Wrap(err, "failed to list machines")
+		return FilterableMachineCollection{}, errors.Wrap(err, "failed to list machines")
 	}
 
 	machines := NewFilterableMachineCollectionFromMachineList(ml)
@@ -145,7 +145,7 @@ func (m *Management) healthCheck(ctx context.Context, check healthCheck, cluster
 
 	// This check ensures there is a 1 to 1 correspondence of nodes and machines.
 	// If a machine was not checked this is considered an error.
-	for _, machine := range machines {
+	for _, machine := range machines.Items() {
 		if machine.Status.NodeRef == nil {
 			return errors.Errorf("control plane machine %s/%s has no status.nodeRef", machine.Namespace, machine.Name)
 		}
@@ -153,8 +153,8 @@ func (m *Management) healthCheck(ctx context.Context, check healthCheck, cluster
 			return errors.Errorf("machine's (%s/%s) node (%s) was not checked", machine.Namespace, machine.Name, machine.Status.NodeRef.Name)
 		}
 	}
-	if len(nodeChecks) != len(machines) {
-		return errors.Errorf("number of nodes and machines in namespace %s did not match: %d nodes %d machines", clusterKey.Namespace, len(nodeChecks), len(machines))
+	if len(nodeChecks) != machines.Len() {
+		return errors.Errorf("number of nodes and machines in namespace %s did not match: %d nodes %d machines", clusterKey.Namespace, len(nodeChecks), machines.Len())
 	}
 	return nil
 }

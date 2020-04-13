@@ -126,7 +126,7 @@ func (c *ControlPlane) FailureDomainWithMostMachines(machines FilterableMachineC
 	notInFailureDomains := machines.Filter(
 		machinefilters.Not(machinefilters.InFailureDomains(c.FailureDomains().FilterControlPlane().GetIDs()...)),
 	)
-	if len(notInFailureDomains) > 0 {
+	if notInFailureDomains.Len() > 0 {
 		// return the failure domain for the oldest Machine not in the current list of failure domains
 		// this could be either nil (no failure domain defined) or a failure domain that is no longer defined
 		// in the cluster status.
@@ -212,10 +212,10 @@ func (c *ControlPlane) NeedsReplacementNode() bool {
 		return false
 	}
 	// if the number of existing machines is exactly 1 > than the number of replicas.
-	return len(c.Machines)+1 == int(*c.KCP.Spec.Replicas)
+	return c.Machines.Len()+1 == int(*c.KCP.Spec.Replicas)
 }
 
 // HasDeletingMachine returns true if any machine in the control plane is in the process of being deleted.
 func (c *ControlPlane) HasDeletingMachine() bool {
-	return len(c.Machines.Filter(machinefilters.HasDeletionTimestamp)) > 0
+	return c.Machines.Filter(machinefilters.HasDeletionTimestamp).Len() > 0
 }
