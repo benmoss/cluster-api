@@ -922,45 +922,6 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 
 }
 
-func TestKubeadmControlPlaneReconciler_scaleDownControlPlane(t *testing.T) {
-	g := NewWithT(t)
-
-	machines := map[string]*clusterv1.Machine{
-		"one":   machine("one"),
-		"two":   machine("two"),
-		"three": machine("three"),
-	}
-	fd1 := "a"
-	fd2 := "b"
-	machines["one"].Spec.FailureDomain = &fd2
-	machines["two"].Spec.FailureDomain = &fd1
-	machines["three"].Spec.FailureDomain = &fd2
-
-	r := &KubeadmControlPlaneReconciler{
-		Log:      log.Log,
-		recorder: record.NewFakeRecorder(32),
-		Client:   newFakeClient(g, machines["one"]),
-		managementCluster: &fakeManagementCluster{
-			EtcdHealthy:         true,
-			ControlPlaneHealthy: true,
-		},
-	}
-	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: "default"})
-
-	kcp := &controlplanev1.KubeadmControlPlane{}
-	controlPlane := &internal.ControlPlane{
-		KCP:      kcp,
-		Cluster:  cluster,
-		Machines: machines,
-	}
-
-	ml := clusterv1.MachineList{}
-	ml.Items = []clusterv1.Machine{*machines["two"]}
-	mll := internal.NewFilterableMachineCollectionFromMachineList(&ml)
-	_, err := r.scaleDownControlPlane(context.Background(), cluster, kcp, machines, mll, controlPlane)
-	g.Expect(err).To(HaveOccurred())
-}
-
 // test utils
 
 func newFakeClient(g *WithT, initObjs ...runtime.Object) client.Client {

@@ -237,14 +237,12 @@ func (f MachineCollectionByFailureDomain) SmallestDomain() *string {
 	var smallestName *string
 	var smallest int
 	for name, byFD := range f.byFD {
-		// handle the first loop, when smallest is a default value
-		if smallest == 0 {
-			smallest = byFD.Len()
+		// handle first loop
+		if smallestName == nil {
 			smallestName = name
-
+			smallest = byFD.Len()
 			continue
 		}
-
 		if byFD.Len() < smallest {
 			smallest = byFD.Len()
 			smallestName = name
@@ -256,6 +254,12 @@ func (f MachineCollectionByFailureDomain) SmallestDomain() *string {
 // AnyFilter returns a filtered machine collection that still retains failure domains
 func (f MachineCollectionByFailureDomain) AnyFilter(filters ...machinefilters.Func) MachineCollectionByFailureDomain {
 	return newFilteredMachineCollection(machinefilters.Or(filters...), f.Items()...).ByFailureDomains(f.failureDomains)
+}
+
+type ScaleStrategy interface {
+	NeedsScaleUp() bool
+	NeedsScaleDown() bool
+	NextForScaleDown() *clusterv1.Machine
 }
 
 // DefaultScaleStrategy implements the default scaling strategy:
@@ -320,3 +324,5 @@ func (s *DefaultScaleStrategy) NextForScaleDown() *clusterv1.Machine {
 	}
 	return outdateds.ByLargestDomain().Oldest()
 }
+
+var _ ScaleStrategy = new(DefaultScaleStrategy)

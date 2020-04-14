@@ -106,6 +106,16 @@ var _ = Describe("Machine Collection", func() {
 				return m.ObjectMeta.Name == "machine-4" || m.ObjectMeta.Name == "machine-5" || m.ObjectMeta.Name == "machine-6"
 			})))
 		})
+
+		It("includes empty domains", func() {
+			mc := NewFilterableMachineCollectionByFailureDomain(
+				clusterv1.FailureDomains{
+					"one": clusterv1.FailureDomainSpec{ControlPlane: true},
+				},
+				NewFilterableMachineCollection(),
+			)
+			Expect(mc.SmallestDomain()).To(Equal(pointer.StringPtr("one")))
+		})
 	})
 
 	Describe("DefaultScaleStrategy", func() {

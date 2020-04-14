@@ -18,7 +18,6 @@ package internal
 
 import (
 	"github.com/go-logr/logr"
-	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/storage/names"
@@ -93,56 +92,14 @@ func (c *ControlPlane) EtcdImageData() (string, string) {
 	return "", ""
 }
 
-// MachinesNeedingUpgrade return a list of machines that need to be upgraded.
-func (c *ControlPlane) MachinesNeedingUpgrade() FilterableMachineCollection {
-	now := metav1.Now()
-	if c.KCP.Spec.UpgradeAfter != nil && c.KCP.Spec.UpgradeAfter.Before(&now) {
-		return c.Machines.AnyFilter(
-			machinefilters.Not(machinefilters.MatchesConfigurationHash(c.SpecHash())),
-			machinefilters.OlderThan(c.KCP.Spec.UpgradeAfter),
-		)
-	}
-
-	return c.Machines.Filter(
-		machinefilters.Not(machinefilters.MatchesConfigurationHash(c.SpecHash())),
-	)
-}
-
-// MachineInFailureDomainWithMostMachines returns the first matching failure domain with machines that has the most control-plane machines on it.
-func (c *ControlPlane) MachineInFailureDomainWithMostMachines(machines FilterableMachineCollection) (*clusterv1.Machine, error) {
-	fd := c.FailureDomainWithMostMachines(machines)
-	machinesInFailureDomain := machines.Filter(machinefilters.InFailureDomains(fd))
-	machineToMark := machinesInFailureDomain.Oldest()
-	if machineToMark == nil {
-		return nil, errors.New("failed to pick control plane Machine to mark for deletion")
-	}
-	return machineToMark, nil
-}
-
-// FailureDomainWithMostMachines returns a fd which exists both in machines and control-plane machines and has the most
-// control-plane machines on it.
-func (c *ControlPlane) FailureDomainWithMostMachines(machines FilterableMachineCollection) *string {
-	// See if there are any Machines that are not in currently defined failure domains first.
-	notInFailureDomains := machines.Filter(
-		machinefilters.Not(machinefilters.InFailureDomains(c.FailureDomains().FilterControlPlane().GetIDs()...)),
-	)
-	if notInFailureDomains.Len() > 0 {
-		// return the failure domain for the oldest Machine not in the current list of failure domains
-		// this could be either nil (no failure domain defined) or a failure domain that is no longer defined
-		// in the cluster status.
-		return notInFailureDomains.Oldest().Spec.FailureDomain
-	}
-
-	return PickMost(c, machines)
+func (c *ControlPlane) ScaleStrategy() ScaleStrategy {
+	return NewDefaultScaleStrategy(c.KCP.Spec, c.Machines.ByFailureDomains(c.FailureDomains()))
 }
 
 // FailureDomainWithFewestMachines returns the failure domain with the fewest number of machines.
 // Used when scaling up.
 func (c *ControlPlane) FailureDomainWithFewestMachines() *string {
-	if len(c.Cluster.Status.FailureDomains.FilterControlPlane()) == 0 {
-		return nil
-	}
-	return PickFewest(c.FailureDomains().FilterControlPlane(), c.Machines)
+	return c.Machines.ByFailureDomains(c.FailureDomains().FilterControlPlane()).SmallestDomain()
 }
 
 // InitialControlPlaneConfig returns a new KubeadmConfigSpec that is to be used for an initializing control plane.

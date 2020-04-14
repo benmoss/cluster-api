@@ -210,15 +210,15 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 	}
 
 	controlPlane := internal.NewControlPlane(cluster, kcp, ownedMachines)
-	requireUpgrade := controlPlane.MachinesNeedingUpgrade()
-	// Upgrade takes precedence over other operations
-	if len(requireUpgrade) > 0 {
-		logger.Info("Upgrading Control Plane")
-		return r.upgradeControlPlane(ctx, cluster, kcp, requireUpgrade, controlPlane)
-	}
+	scaleStrategy := controlPlane.ScaleStrategy()
+
+	// if requireUpgrade.Len() > 0 {
+	// 	logger.Info("Upgrading Control Plane")
+	// 	return r.upgradeControlPlane(ctx, cluster, kcp, controlPlane)
+	// }
 
 	// If we've made it this far, we can assume that all ownedMachines are up to date
-	numMachines := len(ownedMachines)
+	numMachines := ownedMachines.Len()
 	desiredReplicas := int(*kcp.Spec.Replicas)
 
 	switch {
@@ -227,15 +227,12 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		// Create new Machine w/ init
 		logger.Info("Initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
 		return r.initializeControlPlane(ctx, cluster, kcp, controlPlane)
-	// We are scaling up
-	case numMachines < desiredReplicas && numMachines > 0:
-		// Create a new Machine w/ join
-		logger.Info("Scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
-		return r.scaleUpControlPlane(ctx, cluster, kcp, ownedMachines, controlPlane)
-	// We are scaling down
-	case numMachines > desiredReplicas:
-		logger.Info("Scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
-		return r.scaleDownControlPlane(ctx, cluster, kcp, ownedMachines, ownedMachines, controlPlane)
+	case scaleStrategy.NeedsScaleUp():
+		logger.Info("Scaling up control plane")
+		return r.scaleUpControlPlane(ctx, cluster, kcp, controlPlane)
+	case scaleStrategy.NeedsScaleDown():
+		logger.Info("Scaling down control plane")
+		return r.scaleDownControlPlane(ctx, cluster, kcp, controlPlane)
 	}
 
 	// Get the workload cluster client.
@@ -273,13 +270,13 @@ func (r *KubeadmControlPlaneReconciler) reconcileDelete(ctx context.Context, clu
 	ownedMachines := allMachines.Filter(machinefilters.OwnedControlPlaneMachines(kcp.Name))
 
 	// If no control plane machines remain, remove the finalizer
-	if len(ownedMachines) == 0 {
+	if ownedMachines.Len() == 0 {
 		controllerutil.RemoveFinalizer(kcp, controlplanev1.KubeadmControlPlaneFinalizer)
 		return ctrl.Result{}, nil
 	}
 
 	// Verify that only control plane machines remain
-	if len(allMachines) != len(ownedMachines) {
+	if allMachines.Len() != ownedMachines.Len() {
 		logger.V(2).Info("Waiting for worker nodes to be deleted first")
 		return ctrl.Result{}, &capierrors.RequeueAfterError{RequeueAfter: deleteRequeueAfter}
 	}
@@ -287,10 +284,10 @@ func (r *KubeadmControlPlaneReconciler) reconcileDelete(ctx context.Context, clu
 	// Delete control plane machines in parallel
 	machinesToDelete := ownedMachines.Filter(machinefilters.Not(machinefilters.HasDeletionTimestamp))
 	var errs []error
-	for i := range machinesToDelete {
-		m := machinesToDelete[i]
+	for i := range machinesToDelete.Items() {
+		m := machinesToDelete.Items()[i]
 		logger := logger.WithValues("machine", m)
-		if err := r.Client.Delete(ctx, machinesToDelete[i]); err != nil && !apierrors.IsNotFound(err) {
+		if err := r.Client.Delete(ctx, m); err != nil && !apierrors.IsNotFound(err) {
 			logger.Error(err, "Failed to cleanup owned machine")
 			errs = append(errs, err)
 		}

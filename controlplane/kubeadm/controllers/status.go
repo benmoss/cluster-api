@@ -48,9 +48,9 @@ func (r *KubeadmControlPlaneReconciler) updateStatus(ctx context.Context, kcp *c
 	}
 
 	currentMachines := ownedMachines.Filter(machinefilters.MatchesConfigurationHash(hash.Compute(&kcp.Spec)))
-	kcp.Status.UpdatedReplicas = int32(len(currentMachines))
+	kcp.Status.UpdatedReplicas = int32(currentMachines.Len())
 
-	replicas := int32(len(ownedMachines))
+	replicas := int32(ownedMachines.Len())
 
 	// set basic data that does not require interacting with the workload cluster
 	kcp.Status.Replicas = replicas

@@ -249,3 +249,36 @@ func (r *KubeadmControlPlaneReconciler) markWithAnnotationKey(ctx context.Contex
 	}
 	return nil
 }
+
+func failureDomain(controlPlane bool) clusterv1.FailureDomainSpec {
+	return clusterv1.FailureDomainSpec{
+		ControlPlane: controlPlane,
+	}
+}
+
+type machineOpt func(*clusterv1.Machine)
+
+func withFailureDomain(fd string) machineOpt {
+	return func(m *clusterv1.Machine) {
+		m.Spec.FailureDomain = &fd
+	}
+}
+
+func withTimestamp(t metav1.Time) machineOpt {
+	return func(m *clusterv1.Machine) {
+		m.CreationTimestamp = t
+	}
+}
+
+func machine(name string, opts ...machineOpt) *clusterv1.Machine {
+	m := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
