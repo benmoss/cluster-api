@@ -117,13 +117,13 @@ var _ = Describe("Control Plane", func() {
 				BeforeEach(func() {
 					controlPlane.Machines = NewFilterableMachineCollection(
 						machine("machine-1",
-							withCreationTimestamp(metav1.Time{Time: time.Date(year-1, 0, 0, 0, 0, 0, 0, time.UTC)}),
+							withCreationTimestamp(time.Date(year-1, 0, 0, 0, 0, 0, 0, time.UTC)),
 							withHash(controlPlane.SpecHash())),
 						machine("machine-2",
-							withCreationTimestamp(metav1.Time{Time: time.Date(year, 0, 0, 0, 0, 0, 0, time.UTC)}),
+							withCreationTimestamp(time.Date(year, 0, 0, 0, 0, 0, 0, time.UTC)),
 							withHash(controlPlane.SpecHash())),
 						machine("machine-3",
-							withCreationTimestamp(metav1.Time{Time: time.Date(year+1, 0, 0, 0, 0, 0, 0, time.UTC)}),
+							withCreationTimestamp(time.Date(year+1, 0, 0, 0, 0, 0, 0, time.UTC)),
 							withHash(controlPlane.SpecHash())),
 					)
 				})

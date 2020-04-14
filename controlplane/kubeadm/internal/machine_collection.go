@@ -32,6 +32,8 @@ import (
 
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/hash"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
 	"sigs.k8s.io/cluster-api/util"
 )
@@ -199,25 +201,25 @@ func NewFilterableMachineCollectionByFailureDomain(failureDomains clusterv1.Fail
 
 // ByLargestDomain returns a FilterableMachineCollection of machines in the
 // largest failure domain.  It will not return unknown domains.
-func (f *MachineCollectionByFailureDomain) ByLargestDomain() FilterableMachineCollection {
+func (f MachineCollectionByFailureDomain) ByLargestDomain() FilterableMachineCollection {
 	return f.byFD[f.LargestDomain()]
 }
 
 // BySmallestDomain returns a FilterableMachineCollection of machines in the
 // smallest failure domain. It will not return unknown domains.
-func (f *MachineCollectionByFailureDomain) BySmallestDomain() FilterableMachineCollection {
+func (f MachineCollectionByFailureDomain) BySmallestDomain() FilterableMachineCollection {
 	return f.byFD[f.SmallestDomain()]
 }
 
 // ByUnknownDomains returns a FilterableMachineCollection of machines that are
 // not in the list of FailureDomains provided to this collection
-func (f *MachineCollectionByFailureDomain) ByUnknownDomains() FilterableMachineCollection {
+func (f MachineCollectionByFailureDomain) ByUnknownDomains() FilterableMachineCollection {
 	return f.unknowns
 }
 
 // ByLargestDomain returns the name of the failure domain with the most machines.
 // It will not return unknown domains.
-func (f *MachineCollectionByFailureDomain) LargestDomain() *string {
+func (f MachineCollectionByFailureDomain) LargestDomain() *string {
 	var largestName *string
 	var largest int
 	for name, byFD := range f.byFD {
@@ -231,7 +233,7 @@ func (f *MachineCollectionByFailureDomain) LargestDomain() *string {
 
 // BySmallestDomain returns the name of the failure domain with the least machines.
 // It will not return unknown domains.
-func (f *MachineCollectionByFailureDomain) SmallestDomain() *string {
+func (f MachineCollectionByFailureDomain) SmallestDomain() *string {
 	var smallestName *string
 	var smallest int
 	for name, byFD := range f.byFD {
@@ -249,4 +251,72 @@ func (f *MachineCollectionByFailureDomain) SmallestDomain() *string {
 		}
 	}
 	return smallestName
+}
+
+// AnyFilter returns a filtered machine collection that still retains failure domains
+func (f MachineCollectionByFailureDomain) AnyFilter(filters ...machinefilters.Func) MachineCollectionByFailureDomain {
+	return newFilteredMachineCollection(machinefilters.Or(filters...), f.Items()...).ByFailureDomains(f.failureDomains)
+}
+
+// DefaultScaleStrategy implements the default scaling strategy:
+// - When the number of machines is less than the number of replicas, scale up is recommended
+// - When the number of machines is greater than the number of replicas, scale up is not recommended
+// - When the number of machines is equal to the number of replicas:
+//   - When machines are older than the KCP's UpgradeAfter field, scale up is recommended
+//   - When machines configuration hashes do not match the KCP's configuration hash, scale up is recommended
+// - When scale up is recommended, scale down is not recommended
+// - When the number of machines is greater than the number of replicas, scale down is recommended
+// - When scaling down, remove outdated machines before up-to-date machines
+// - When scaling down, remove machines from unknown failure domains before known failure domains
+// - When scaling down, remove machines from failure domains with the largest number of outdated machines first
+type DefaultScaleStrategy struct {
+	kcp      controlplanev1.KubeadmControlPlaneSpec
+	machines MachineCollectionByFailureDomain
+}
+
+func NewDefaultScaleStrategy(kcp controlplanev1.KubeadmControlPlaneSpec, machines MachineCollectionByFailureDomain) *DefaultScaleStrategy {
+	return &DefaultScaleStrategy{
+		kcp:      kcp,
+		machines: machines,
+	}
+}
+
+// NeedsScaleDown returns whether scale up is necessary.
+func (s *DefaultScaleStrategy) NeedsScaleUp() bool {
+	if s.machines.Len() < int(*s.kcp.Replicas) {
+		return true
+	}
+	if s.machines.Len() > int(*s.kcp.Replicas) {
+		return false
+	}
+	if s.machines.Filter(machinefilters.Not(machinefilters.MatchesConfigurationHash(hash.Compute(&s.kcp)))).Len() > 0 {
+		return true
+	}
+	if s.machines.Filter(machinefilters.OlderThan(s.kcp.UpgradeAfter)).Len() > 0 {
+		return true
+	}
+	return false
+}
+
+// NeedsScaleDown returns whether scale down is necessary.
+func (s *DefaultScaleStrategy) NeedsScaleDown() bool {
+	return !s.NeedsScaleUp() && s.NextForScaleDown() != nil
+}
+
+// NextForScaleDown returns the next machine to be scaled down
+func (s *DefaultScaleStrategy) NextForScaleDown() *clusterv1.Machine {
+	if s.machines.Len() > int(*s.kcp.Replicas) {
+		if s.machines.ByUnknownDomains().Len() > 0 {
+			return s.machines.ByUnknownDomains().Oldest()
+		}
+		return s.machines.ByLargestDomain().Oldest()
+	}
+	outdateds := s.machines.AnyFilter(
+		machinefilters.Not(machinefilters.MatchesConfigurationHash(hash.Compute(&s.kcp))),
+		machinefilters.OlderThan(s.kcp.UpgradeAfter),
+	)
+	if outdateds.ByUnknownDomains().Len() > 0 {
+		return outdateds.ByUnknownDomains().Oldest()
+	}
+	return outdateds.ByLargestDomain().Oldest()
 }
