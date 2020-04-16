@@ -4,7 +4,7 @@
 <img alt="Build Status" src="https://prow.k8s.io/badge.svg?jobs=ci-cluster-api-build">
 </a> <a href="https://godoc.org/sigs.k8s.io/cluster-api"><img src="https://godoc.org/sigs.k8s.io/cluster-api?status.svg"></a> <a href="https://goreportcard.com/report/sigs.k8s.io/cluster-api"><img alt="Go Report Card" src="https://goreportcard.com/badge/sigs.k8s.io/cluster-api" /></a></p>
 
-# Cluster API
+# Cluster derp
 
 ## Please see our [Book](https://cluster-api.sigs.k8s.io) for more in-depth documentation.
 
