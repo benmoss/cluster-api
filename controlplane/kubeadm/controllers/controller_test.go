@@ -48,7 +48,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -104,93 +103,6 @@ var _ = Describe("KubeadmControlPlaneReconciler", func() {
 		})
 	})
 })
-
-func TestClusterToKubeadmControlPlane(t *testing.T) {
-	g := NewWithT(t)
-	fakeClient := newFakeClient(g)
-
-	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: "test"})
-	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "KubeadmControlPlane",
-			Namespace:  "test",
-			Name:       "kcp-foo",
-			APIVersion: controlplanev1.GroupVersion.String(),
-		},
-	}
-
-	expectedResult := []ctrl.Request{
-		{
-			NamespacedName: client.ObjectKey{
-				Namespace: cluster.Spec.ControlPlaneRef.Namespace,
-				Name:      cluster.Spec.ControlPlaneRef.Name},
-		},
-	}
-
-	r := &KubeadmControlPlaneReconciler{
-		Client:   fakeClient,
-		Log:      log.Log,
-		recorder: record.NewFakeRecorder(32),
-	}
-
-	got := r.ClusterToKubeadmControlPlane(
-		handler.MapObject{
-			Meta:   cluster.GetObjectMeta(),
-			Object: cluster,
-		},
-	)
-	g.Expect(got).To(Equal(expectedResult))
-}
-
-func TestClusterToKubeadmControlPlaneNoControlPlane(t *testing.T) {
-	g := NewWithT(t)
-	fakeClient := newFakeClient(g)
-
-	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: "test"})
-
-	r := &KubeadmControlPlaneReconciler{
-		Client:   fakeClient,
-		Log:      log.Log,
-		recorder: record.NewFakeRecorder(32),
-	}
-
-	got := r.ClusterToKubeadmControlPlane(
-		handler.MapObject{
-			Meta:   cluster.GetObjectMeta(),
-			Object: cluster,
-		},
-	)
-	g.Expect(got).To(BeNil())
-}
-
-func TestClusterToKubeadmControlPlaneOtherControlPlane(t *testing.T) {
-	g := NewWithT(t)
-	fakeClient := newFakeClient(g)
-
-	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: "test"})
-	cluster.Spec = clusterv1.ClusterSpec{
-		ControlPlaneRef: &corev1.ObjectReference{
-			Kind:       "OtherControlPlane",
-			Namespace:  "test",
-			Name:       "other-foo",
-			APIVersion: controlplanev1.GroupVersion.String(),
-		},
-	}
-
-	r := &KubeadmControlPlaneReconciler{
-		Client:   fakeClient,
-		Log:      log.Log,
-		recorder: record.NewFakeRecorder(32),
-	}
-
-	got := r.ClusterToKubeadmControlPlane(
-		handler.MapObject{
-			Meta:   cluster.GetObjectMeta(),
-			Object: cluster,
-		},
-	)
-	g.Expect(got).To(BeNil())
-}
 
 func TestReconcileNoClusterOwnerRef(t *testing.T) {
 	g := NewWithT(t)
