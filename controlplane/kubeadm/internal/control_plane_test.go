@@ -29,6 +29,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/util"
 )
 
 func TestControlPlane(t *testing.T) {
@@ -47,7 +48,7 @@ var _ = Describe("Control Plane", func() {
 
 	Describe("Failure domains", func() {
 		BeforeEach(func() {
-			controlPlane.Machines = FilterableMachineCollection{
+			controlPlane.Machines = util.FilterableMachineCollection{
 				"machine-1": machine("machine-1", withFailureDomain("one")),
 				"machine-2": machine("machine-2", withFailureDomain("two")),
 				"machine-3": machine("machine-3", withFailureDomain("two")),
@@ -96,7 +97,7 @@ var _ = Describe("Control Plane", func() {
 		Context("With machines", func() {
 			BeforeEach(func() {
 				controlPlane.KCP.Spec.Version = "2"
-				controlPlane.Machines = FilterableMachineCollection{
+				controlPlane.Machines = util.FilterableMachineCollection{
 					"machine-1": machine("machine-1", withHash(controlPlane.SpecHash())),
 					"machine-2": machine("machine-2", withHash(controlPlane.SpecHash())),
 					"machine-3": machine("machine-3", withHash(controlPlane.SpecHash())),
@@ -115,7 +116,7 @@ var _ = Describe("Control Plane", func() {
 			Context("That have an up-to-date configuration", func() {
 				year := 2000
 				BeforeEach(func() {
-					controlPlane.Machines = FilterableMachineCollection{
+					controlPlane.Machines = util.FilterableMachineCollection{
 						"machine-1": machine("machine-1",
 							withCreationTimestamp(metav1.Time{Time: time.Date(year-1, 0, 0, 0, 0, 0, 0, time.UTC)}),
 							withHash(controlPlane.SpecHash())),
@@ -216,4 +217,24 @@ func withHash(hash string) machineOpt {
 	return func(m *clusterv1.Machine) {
 		m.SetLabels(map[string]string{controlplanev1.KubeadmControlPlaneHashLabelKey: hash})
 	}
+}
+
+type machineOpt func(*clusterv1.Machine)
+
+func withCreationTimestamp(timestamp metav1.Time) machineOpt {
+	return func(m *clusterv1.Machine) {
+		m.CreationTimestamp = timestamp
+	}
+}
+
+func machine(name string, opts ...machineOpt) *clusterv1.Machine {
+	m := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }

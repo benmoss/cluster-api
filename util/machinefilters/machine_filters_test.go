@@ -25,8 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
+	"sigs.k8s.io/cluster-api/util/machinefilters"
 )
 
 func falseFilter(_ *clusterv1.Machine) bool {
@@ -95,26 +94,6 @@ func TestHasDeletionTimestamp(t *testing.T) {
 		zero := metav1.NewTime(time.Time{})
 		m.SetDeletionTimestamp(&zero)
 		g.Expect(machinefilters.HasDeletionTimestamp(m)).To(BeFalse())
-	})
-}
-
-func TestMatchesConfigurationHash(t *testing.T) {
-	t.Run("machine with configuration hash returns true", func(t *testing.T) {
-		g := NewWithT(t)
-		m := &clusterv1.Machine{}
-		m.SetLabels(internal.ControlPlaneLabelsForClusterWithHash("test", "hashValue"))
-		g.Expect(machinefilters.MatchesConfigurationHash("hashValue")(m)).To(BeTrue())
-	})
-	t.Run("machine with wrong configuration hash returns false", func(t *testing.T) {
-		g := NewWithT(t)
-		m := &clusterv1.Machine{}
-		m.SetLabels(internal.ControlPlaneLabelsForClusterWithHash("test", "notHashValue"))
-		g.Expect(machinefilters.MatchesConfigurationHash("hashValue")(m)).To(BeFalse())
-	})
-	t.Run("machine without configuration hash returns false", func(t *testing.T) {
-		g := NewWithT(t)
-		m := &clusterv1.Machine{}
-		g.Expect(machinefilters.MatchesConfigurationHash("hashValue")(m)).To(BeFalse())
 	})
 }
 
@@ -196,5 +175,25 @@ func TestInFailureDomain(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{Spec: clusterv1.MachineSpec{FailureDomain: pointer.StringPtr("test")}}
 		g.Expect(machinefilters.InFailureDomains(pointer.StringPtr("foo"), pointer.StringPtr("test"))(m)).To(BeTrue())
+	})
+}
+
+func TestMatchesLabel(t *testing.T) {
+	t.Run("machine with label returns true", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		m.SetLabels(map[string]string{"test": "hashValue"})
+		g.Expect(machinefilters.MatchesLabel("test", "hashValue")(m)).To(BeTrue())
+	})
+	t.Run("machine with wrong value returns false", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		m.SetLabels(map[string]string{"test": "notHashValue"})
+		g.Expect(machinefilters.MatchesLabel("test", "hashValue")(m)).To(BeFalse())
+	})
+	t.Run("machine without configuration hash returns false", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		g.Expect(machinefilters.MatchesLabel("test", "hashValue")(m)).To(BeFalse())
 	})
 }

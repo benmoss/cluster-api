@@ -25,14 +25,13 @@ limitations under the License.
 //   - Updated Has to also check for equality of Machines
 //   - Removed unused methods
 
-package internal
+package util
 
 import (
 	"sort"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
-	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/machinefilters"
 )
 
 // FilterableMachineCollection is a set of Machines
@@ -69,7 +68,7 @@ func (s FilterableMachineCollection) Insert(machines ...*clusterv1.Machine) Filt
 
 // SortedByCreationTimestamp returns the machines sorted by creation timestamp
 func (s FilterableMachineCollection) SortedByCreationTimestamp() []*clusterv1.Machine {
-	res := make(util.MachinesByCreationTimestamp, 0, len(s))
+	res := make(MachinesByCreationTimestamp, 0, len(s))
 	for _, value := range s {
 		res = append(res, value)
 	}

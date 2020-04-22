@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
+	. "sigs.k8s.io/cluster-api/test/helpers"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,8 +33,8 @@ import (
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/hash"
 	capierrors "sigs.k8s.io/cluster-api/errors"
+	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -87,7 +88,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 		initObjs := []runtime.Object{cluster.DeepCopy(), kcp.DeepCopy(), genericMachineTemplate.DeepCopy()}
 
 		fmc := &fakeManagementCluster{
-			Machines:            internal.NewFilterableMachineCollection(),
+			Machines:            util.NewFilterableMachineCollection(),
 			ControlPlaneHealthy: true,
 			EtcdHealthy:         true,
 		}
@@ -124,7 +125,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 		cluster, kcp, genericMachineTemplate := createClusterWithControlPlane()
 		initObjs := []runtime.Object{cluster.DeepCopy(), kcp.DeepCopy(), genericMachineTemplate.DeepCopy()}
 
-		beforeMachines := internal.NewFilterableMachineCollection()
+		beforeMachines := util.NewFilterableMachineCollection()
 		for i := 0; i < 2; i++ {
 			m, _ := createMachineNodePair(fmt.Sprintf("test-%d", i), cluster.DeepCopy(), kcp.DeepCopy(), true)
 			beforeMachines = beforeMachines.Insert(m)
@@ -175,7 +176,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 			g.Expect(fakeClient.List(context.Background(), controlPlaneMachines)).To(Succeed())
 			g.Expect(controlPlaneMachines.Items).To(HaveLen(len(beforeMachines)))
 
-			endMachines := internal.NewFilterableMachineCollectionFromMachineList(controlPlaneMachines)
+			endMachines := util.NewFilterableMachineCollectionFromMachineList(controlPlaneMachines)
 			for _, m := range endMachines {
 				bm, ok := beforeMachines[m.Name]
 				g.Expect(ok).To(BeTrue())
@@ -189,7 +190,7 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 	g := NewWithT(t)
 
 	machines := map[string]*clusterv1.Machine{
-		"one": machine("one"),
+		"one": Machine("one"),
 	}
 
 	r := &KubeadmControlPlaneReconciler{
@@ -218,13 +219,13 @@ func TestSelectMachineForScaleDown(t *testing.T) {
 		Spec: controlplanev1.KubeadmControlPlaneSpec{},
 	}
 	startDate := time.Date(2000, 1, 1, 1, 0, 0, 0, time.UTC)
-	m1 := machine("machine-1", withFailureDomain("one"), withTimestamp(startDate.Add(time.Hour)), withValidHash(kcp.Spec))
-	m2 := machine("machine-2", withFailureDomain("one"), withTimestamp(startDate.Add(-3*time.Hour)), withValidHash(kcp.Spec))
-	m3 := machine("machine-3", withFailureDomain("one"), withTimestamp(startDate.Add(-4*time.Hour)), withValidHash(kcp.Spec))
-	m4 := machine("machine-4", withFailureDomain("two"), withTimestamp(startDate.Add(-time.Hour)), withValidHash(kcp.Spec))
-	m5 := machine("machine-5", withFailureDomain("two"), withTimestamp(startDate.Add(-2*time.Hour)), withHash("shrug"))
+	m1 := Machine("machine-1", WithFailureDomain("one"), WithTimestamp(startDate.Add(time.Hour)), WithValidHash(kcp.Spec))
+	m2 := Machine("machine-2", WithFailureDomain("one"), WithTimestamp(startDate.Add(-3*time.Hour)), WithValidHash(kcp.Spec))
+	m3 := Machine("machine-3", WithFailureDomain("one"), WithTimestamp(startDate.Add(-4*time.Hour)), WithValidHash(kcp.Spec))
+	m4 := Machine("machine-4", WithFailureDomain("two"), WithTimestamp(startDate.Add(-time.Hour)), WithValidHash(kcp.Spec))
+	m5 := Machine("machine-5", WithFailureDomain("two"), WithTimestamp(startDate.Add(-2*time.Hour)), WithHash("shrug"))
 
-	mc3 := internal.NewFilterableMachineCollection(m1, m2, m3, m4, m5)
+	mc3 := util.NewFilterableMachineCollection(m1, m2, m3, m4, m5)
 	fd := clusterv1.FailureDomains{
 		"one": failureDomain(true),
 		"two": failureDomain(true),
@@ -285,29 +286,5 @@ func TestSelectMachineForScaleDown(t *testing.T) {
 func failureDomain(controlPlane bool) clusterv1.FailureDomainSpec {
 	return clusterv1.FailureDomainSpec{
 		ControlPlane: controlPlane,
-	}
-}
-
-func withFailureDomain(fd string) machineOpt {
-	return func(m *clusterv1.Machine) {
-		m.Spec.FailureDomain = &fd
-	}
-}
-
-func withTimestamp(t time.Time) machineOpt {
-	return func(m *clusterv1.Machine) {
-		m.CreationTimestamp = metav1.NewTime(t)
-	}
-}
-
-func withValidHash(kcp controlplanev1.KubeadmControlPlaneSpec) machineOpt {
-	return func(m *clusterv1.Machine) {
-		withHash(hash.Compute(&kcp))(m)
-	}
-}
-
-func withHash(hash string) machineOpt {
-	return func(m *clusterv1.Machine) {
-		m.SetLabels(map[string]string{controlplanev1.KubeadmControlPlaneHashLabelKey: hash})
 	}
 }

@@ -25,8 +25,9 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/hash"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
+	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/hash"
+	"sigs.k8s.io/cluster-api/util/machinefilters"
 )
 
 // ControlPlane holds business logic around control planes.
@@ -34,11 +35,11 @@ import (
 type ControlPlane struct {
 	KCP      *controlplanev1.KubeadmControlPlane
 	Cluster  *clusterv1.Cluster
-	Machines FilterableMachineCollection
+	Machines util.FilterableMachineCollection
 }
 
 // NewControlPlane returns an instantiated ControlPlane.
-func NewControlPlane(cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines FilterableMachineCollection) *ControlPlane {
+func NewControlPlane(cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines util.FilterableMachineCollection) *ControlPlane {
 	return &ControlPlane{
 		KCP:      kcp,
 		Cluster:  cluster,
@@ -94,22 +95,22 @@ func (c *ControlPlane) EtcdImageData() (string, string) {
 }
 
 // MachinesNeedingUpgrade return a list of machines that need to be upgraded.
-func (c *ControlPlane) MachinesNeedingUpgrade() FilterableMachineCollection {
+func (c *ControlPlane) MachinesNeedingUpgrade() util.FilterableMachineCollection {
 	now := metav1.Now()
 	if c.KCP.Spec.UpgradeAfter != nil && c.KCP.Spec.UpgradeAfter.Before(&now) {
 		return c.Machines.AnyFilter(
-			machinefilters.Not(machinefilters.MatchesConfigurationHash(c.SpecHash())),
+			machinefilters.Not(machinefilters.MatchesLabel(controlplanev1.KubeadmControlPlaneHashLabelKey, c.SpecHash())),
 			machinefilters.OlderThan(c.KCP.Spec.UpgradeAfter),
 		)
 	}
 
 	return c.Machines.Filter(
-		machinefilters.Not(machinefilters.MatchesConfigurationHash(c.SpecHash())),
+		machinefilters.Not(machinefilters.MatchesLabel(controlplanev1.KubeadmControlPlaneHashLabelKey, c.SpecHash())),
 	)
 }
 
 // MachineInFailureDomainWithMostMachines returns the first matching failure domain with machines that has the most control-plane machines on it.
-func (c *ControlPlane) MachineInFailureDomainWithMostMachines(machines FilterableMachineCollection) (*clusterv1.Machine, error) {
+func (c *ControlPlane) MachineInFailureDomainWithMostMachines(machines util.FilterableMachineCollection) (*clusterv1.Machine, error) {
 	fd := c.FailureDomainWithMostMachines(machines)
 	machinesInFailureDomain := machines.Filter(machinefilters.InFailureDomains(fd))
 	machineToMark := machinesInFailureDomain.Oldest()
@@ -121,7 +122,7 @@ func (c *ControlPlane) MachineInFailureDomainWithMostMachines(machines Filterabl
 
 // FailureDomainWithMostMachines returns a fd which exists both in machines and control-plane machines and has the most
 // control-plane machines on it.
-func (c *ControlPlane) FailureDomainWithMostMachines(machines FilterableMachineCollection) *string {
+func (c *ControlPlane) FailureDomainWithMostMachines(machines util.FilterableMachineCollection) *string {
 	// See if there are any Machines that are not in currently defined failure domains first.
 	notInFailureDomains := machines.Filter(
 		machinefilters.Not(machinefilters.InFailureDomains(c.FailureDomains().FilterControlPlane().GetIDs()...)),

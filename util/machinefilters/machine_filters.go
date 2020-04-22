@@ -20,7 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 )
 
 type Func func(machine *clusterv1.Machine) bool
@@ -105,20 +104,6 @@ func HasDeletionTimestamp(machine *clusterv1.Machine) bool {
 	return !machine.DeletionTimestamp.IsZero()
 }
 
-// MatchesConfigurationHash returns a filter to find all machines
-// that match a given KubeadmControlPlane configuration hash.
-func MatchesConfigurationHash(configHash string) Func {
-	return func(machine *clusterv1.Machine) bool {
-		if machine == nil {
-			return false
-		}
-		if hash, ok := machine.Labels[controlplanev1.KubeadmControlPlaneHashLabelKey]; ok {
-			return hash == configHash
-		}
-		return false
-	}
-}
-
 // OlderThan returns a filter to find all machines
 // that have a CreationTimestamp earlier than the given time.
 func OlderThan(t *metav1.Time) Func {
@@ -139,6 +124,19 @@ func HasAnnotationKey(key string) Func {
 		}
 		if _, ok := machine.Annotations[key]; ok {
 			return true
+		}
+		return false
+	}
+}
+
+// MatchesLabel returns a filter to find all machines that match a given label.
+func MatchesLabel(key, value string) func(machine *clusterv1.Machine) bool {
+	return func(machine *clusterv1.Machine) bool {
+		if machine == nil {
+			return false
+		}
+		if v, ok := machine.Labels[key]; ok {
+			return v == value
 		}
 		return false
 	}

@@ -22,12 +22,12 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	capierrors "sigs.k8s.io/cluster-api/errors"
+	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -73,7 +73,7 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	kcp.Spec.Version = "v1.17.4"
 
 	// run upgrade the first time, expect we scale up
-	needingUpgrade := internal.NewFilterableMachineCollectionFromMachineList(initialMachine)
+	needingUpgrade := util.NewFilterableMachineCollectionFromMachineList(initialMachine)
 	controlPlane.Machines = needingUpgrade
 	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, controlPlane)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
@@ -89,7 +89,7 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	g.Expect(fakeClient.List(context.Background(), bothMachines, client.InNamespace(cluster.Namespace))).To(Succeed())
 	g.Expect(bothMachines.Items).To(HaveLen(2))
 
-	controlPlane.Machines = internal.NewFilterableMachineCollectionFromMachineList(bothMachines)
+	controlPlane.Machines = util.NewFilterableMachineCollectionFromMachineList(bothMachines)
 
 	// manually increase number of nodes, make control plane healthy again
 	r.managementCluster.(*fakeManagementCluster).Workload.Status.Nodes++
@@ -106,19 +106,4 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	// assert that the deleted machine is the oldest, initial machine
 	g.Expect(finalMachine.Items[0].Name).ToNot(Equal(initialMachine.Items[0].Name))
 	g.Expect(finalMachine.Items[0].CreationTimestamp.Time).To(BeTemporally(">", initialMachine.Items[0].CreationTimestamp.Time))
-}
-
-type machineOpt func(*clusterv1.Machine)
-
-func machine(name string, opts ...machineOpt) *clusterv1.Machine {
-	m := &clusterv1.Machine{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-		},
-	}
-	for _, opt := range opts {
-		opt(m)
-	}
-	return m
 }
