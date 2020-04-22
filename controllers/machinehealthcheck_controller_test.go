@@ -342,7 +342,8 @@ var _ = Describe("MachineHealthCheck Reconciler", func() {
 				for _, m := range rtc.expectRemediated() {
 					machine := &clusterv1.Machine{}
 					key := types.NamespacedName{Namespace: m.Namespace, Name: m.Name}
-					Expect(k8sClient.Get(ctx, key, machine)).ToNot(Succeed())
+					Expect(k8sClient.Get(ctx, key, machine)).To(Succeed())
+					Expect(machine.GetAnnotations()).To(HaveKey(clusterv1.MachineUnhealthy))
 				}
 			},
 			Entry("with healthy Machines", &reconcileTestCase{

@@ -203,7 +203,7 @@ func (r *MachineHealthCheckReconciler) reconcile(ctx context.Context, cluster *c
 
 	// fetch all targets
 	logger.V(3).Info("Finding targets")
-	targets, err := r.getTargetsFromMHC(clusterClient, cluster, m)
+	targets, err := r.getTargetsFromMHC(clusterClient, m)
 	if err != nil {
 		logger.Error(err, "Failed to fetch targets from MachineHealthCheck")
 		return ctrl.Result{}, err
@@ -242,11 +242,11 @@ func (r *MachineHealthCheckReconciler) reconcile(ctx context.Context, cluster *c
 		"unhealthy targets", totalTargets-currentHealthy,
 	)
 
-	// remediate
+	// annotate for remediation
 	errList := []error{}
 	for _, t := range needRemediationTargets {
 		logger.V(3).Info("Target meets unhealthy criteria, triggers remediation", "target", t.string())
-		if err := t.remediate(ctx, logger, r.Client, r.recorder); err != nil {
+		if err := t.annotate(ctx, logger, r.Client); err != nil {
 			logger.Error(err, "Error remediating target", "target", t.string())
 			errList = append(errList, err)
 		}
