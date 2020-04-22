@@ -37,10 +37,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/controllers/controllersfakes"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	// +kubebuilder:scaffold:imports
 )
@@ -50,7 +50,8 @@ import (
 
 func init() {
 	klog.InitFlags(nil)
-	logf.SetLogger(klogr.New())
+	klog.SetOutput(GinkgoWriter)
+	log.SetLogger(klogr.New())
 
 	// Register required object kinds with global scheme.
 	_ = apiextensionsv1.AddToScheme(scheme.Scheme)
@@ -124,9 +125,10 @@ var _ = BeforeSuite(func(done Done) {
 		recorder: mgr.GetEventRecorderFor("machine-controller"),
 	}).SetupWithManager(mgr, controller.Options{MaxConcurrentReconciles: 1})).To(Succeed())
 	Expect((&MachineSetReconciler{
-		Client:   k8sClient,
-		Log:      log.Log,
-		recorder: mgr.GetEventRecorderFor("machineset-controller"),
+		Client:             k8sClient,
+		Log:                log.Log,
+		recorder:           mgr.GetEventRecorderFor("machineset-controller"),
+		MachineHealthCheck: &controllersfakes.FakeMachineHealthCheck{},
 	}).SetupWithManager(mgr, controller.Options{MaxConcurrentReconciles: 1})).To(Succeed())
 	Expect((&MachineDeploymentReconciler{
 		Client:   k8sClient,

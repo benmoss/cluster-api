@@ -55,6 +55,7 @@ GO_APIDIFF := $(TOOLS_DIR)/$(GO_APIDIFF_BIN)
 # Binaries.
 # Need to use abspath so we can invoke these from subdirectories
 KUSTOMIZE := $(abspath $(TOOLS_BIN_DIR)/kustomize)
+COUNTERFEITER := $(abspath $(TOOLS_BIN_DIR)/counterfeiter)
 CONTROLLER_GEN := $(abspath $(TOOLS_BIN_DIR)/controller-gen)
 GOLANGCI_LINT := $(abspath $(TOOLS_BIN_DIR)/golangci-lint)
 CONVERSION_GEN := $(abspath $(TOOLS_BIN_DIR)/conversion-gen)
@@ -159,6 +160,9 @@ managers: ## Build all managers
 .PHONY: clusterctl
 clusterctl: ## Build clusterctl binary
 	go build -ldflags "$(LDFLAGS)" -o bin/clusterctl sigs.k8s.io/cluster-api/cmd/clusterctl
+
+$(COUNTERFEITER): $(TOOLS_DIR)/go.mod
+	cd $(TOOLS_DIR); go build -tags=tools -o $(BIN_DIR)/counterfeiter github.com/maxbrunsfeld/counterfeiter/v6
 
 $(KUSTOMIZE): $(TOOLS_DIR)/go.mod # Build kustomize from tools folder.
 	cd $(TOOLS_DIR); go build -tags=tools -o $(BIN_DIR)/kustomize sigs.k8s.io/kustomize/kustomize/v3
@@ -324,6 +328,10 @@ modules: ## Runs go mod to ensure modules are up to date.
 	cd $(TOOLS_DIR); go mod tidy
 	$(MAKE) -C $(CAPD_DIR) modules
 	$(MAKE) -C $(CLUSTERCTL_E2E_DIR) modules
+
+.PHONY: generate-mocks
+generate-mocks: $(COUNTERFEITER)
+	export PATH=$(abspath $(TOOLS_BIN_DIR)):$$PATH; go generate ./...
 
 ## --------------------------------------
 ## Docker

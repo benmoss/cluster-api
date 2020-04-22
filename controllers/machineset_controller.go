@@ -59,6 +59,11 @@ var (
 	stateConfirmationInterval = 100 * time.Millisecond
 )
 
+//go:generate counterfeiter . machineHealthCheck
+type machineHealthCheck interface {
+	Remediate(context.Context, util.FilterableMachineCollection) (bool, error)
+}
+
 // +kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch;create;patch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch;create;update;patch;delete
@@ -67,8 +72,9 @@ var (
 
 // MachineSetReconciler reconciles a MachineSet object
 type MachineSetReconciler struct {
-	Client client.Client
-	Log    logr.Logger
+	Client             client.Client
+	Log                logr.Logger
+	MachineHealthCheck machineHealthCheck
 
 	recorder record.EventRecorder
 	scheme   *runtime.Scheme
@@ -201,6 +207,12 @@ func (r *MachineSetReconciler) reconcile(ctx context.Context, cluster *clusterv1
 	)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to list machines")
+	}
+
+	if remediated, err := r.MachineHealthCheck.Remediate(ctx, util.NewFilterableMachineCollectionFromMachineList(allMachines)); err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "failed to remediate machines")
+	} else if remediated {
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// Filter out irrelevant machines (deleting/mismatch labels) and claim orphaned machines.

@@ -23,6 +23,7 @@ import (
 	_ "github.com/go-bindata/go-bindata"
 	_ "github.com/golangci/golangci-lint/cmd/golangci-lint"
 	_ "github.com/joelanford/go-apidiff"
+	_ "github.com/maxbrunsfeld/counterfeiter/v6"
 	_ "github.com/onsi/ginkgo/ginkgo"
 	_ "github.com/raviqqe/liche"
 	_ "k8s.io/code-generator/cmd/conversion-gen"

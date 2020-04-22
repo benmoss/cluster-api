@@ -22,6 +22,7 @@ func Machine(name string, opts ...MachineOpt) *clusterv1.Machine {
 	for _, opt := range opts {
 		opt(m)
 	}
+
 	return m
 }
 
@@ -46,5 +47,11 @@ func WithValidHash(kcp controlplanev1.KubeadmControlPlaneSpec) MachineOpt {
 func WithHash(hash string) MachineOpt {
 	return func(m *clusterv1.Machine) {
 		m.SetLabels(map[string]string{controlplanev1.KubeadmControlPlaneHashLabelKey: hash})
+	}
+}
+
+func WithAnnotation(key, value string) MachineOpt {
+	return func(m *clusterv1.Machine) {
+		m.SetAnnotations(map[string]string{key: value})
 	}
 }

@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/controllers/controllersfakes"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
@@ -328,8 +329,9 @@ func TestMachineSetOwnerReference(t *testing.T) {
 					ms2,
 					ms3,
 				),
-				Log:      log.Log,
-				recorder: record.NewFakeRecorder(32),
+				Log:                log.Log,
+				recorder:           record.NewFakeRecorder(32),
+				MachineHealthCheck: &controllersfakes.FakeMachineHealthCheck{},
 			}
 
 			_, err := msr.Reconcile(tc.request)
@@ -400,9 +402,10 @@ func TestMachineSetReconcile(t *testing.T) {
 
 		rec := record.NewFakeRecorder(32)
 		msr := &MachineSetReconciler{
-			Client:   fake.NewFakeClientWithScheme(scheme.Scheme, testCluster, ms),
-			Log:      log.Log,
-			recorder: rec,
+			Client:             fake.NewFakeClientWithScheme(scheme.Scheme, testCluster, ms),
+			Log:                log.Log,
+			recorder:           rec,
+			MachineHealthCheck: &controllersfakes.FakeMachineHealthCheck{},
 		}
 		_, _ = msr.Reconcile(request)
 		g.Eventually(rec.Events).Should(Receive())
