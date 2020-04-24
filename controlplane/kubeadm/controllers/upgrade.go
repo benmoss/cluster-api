@@ -86,7 +86,7 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 
 	if status.Nodes <= *kcp.Spec.Replicas {
 		// scaleUp ensures that we don't continue scaling up while waiting for Machines to have NodeRefs
-		return r.scaleUpControlPlane(ctx, cluster, kcp, controlPlane)
+		return r.ScaleUp(ctx, cluster, kcp, controlPlane)
 	}
-	return r.scaleDownControlPlane(ctx, cluster, kcp, controlPlane)
+	return r.ScaleDown(ctx, cluster, kcp, controlPlane)
 }

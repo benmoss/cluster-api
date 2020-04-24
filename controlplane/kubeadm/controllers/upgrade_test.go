@@ -43,15 +43,22 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 
 	fakeClient := newFakeClient(g, cluster.DeepCopy(), kcp.DeepCopy(), genericMachineTemplate.DeepCopy())
 
+	managementCluster := &fakeManagementCluster{
+		Management:          &internal.Management{Client: fakeClient},
+		Workload:            fakeWorkloadCluster{Status: internal.ClusterStatus{Nodes: 1}},
+		ControlPlaneHealthy: true,
+		EtcdHealthy:         true,
+	}
+
 	r := &KubeadmControlPlaneReconciler{
-		Client:   fakeClient,
-		Log:      log.Log,
-		recorder: record.NewFakeRecorder(32),
-		managementCluster: &fakeManagementCluster{
-			Management:          &internal.Management{Client: fakeClient},
-			Workload:            fakeWorkloadCluster{Status: internal.ClusterStatus{Nodes: 1}},
-			ControlPlaneHealthy: true,
-			EtcdHealthy:         true,
+		Client:            fakeClient,
+		Log:               log.Log,
+		recorder:          record.NewFakeRecorder(32),
+		managementCluster: managementCluster,
+		ScaleController: &ScaleController{
+			Client:            fakeClient,
+			managementCluster: managementCluster,
+			recorder:          record.NewFakeRecorder(32),
 		},
 	}
 	controlPlane := &internal.ControlPlane{
@@ -60,7 +67,7 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 		Machines: nil,
 	}
 
-	result, err := r.initializeControlPlane(context.Background(), cluster, kcp, controlPlane)
+	result, err := r.Initialize(context.Background(), cluster, kcp, controlPlane)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	g.Expect(err).NotTo(HaveOccurred())
 

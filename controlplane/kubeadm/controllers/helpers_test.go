@@ -27,14 +27,11 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
-	utilpointer "k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
 	kubeadmv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/hash"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/secret"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -253,6 +250,9 @@ func TestCloneConfigsAndGenerateMachine(t *testing.T) {
 		Log:      log.Log,
 		recorder: record.NewFakeRecorder(32),
 		scheme:   scheme.Scheme,
+		ScaleController: &ScaleController{
+			Client: fakeClient,
+		},
 	}
 
 	bootstrapSpec := &bootstrapv1.KubeadmConfigSpec{
@@ -281,123 +281,8 @@ func TestCloneConfigsAndGenerateMachine(t *testing.T) {
 	}
 }
 
-func TestKubeadmControlPlaneReconciler_generateMachine(t *testing.T) {
-	g := NewWithT(t)
-	fakeClient := newFakeClient(g)
-
-	cluster := &clusterv1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "testCluster",
-			Namespace: "test",
-		},
-	}
-
-	kcp := &controlplanev1.KubeadmControlPlane{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "testControlPlane",
-			Namespace: cluster.Namespace,
-		},
-		Spec: controlplanev1.KubeadmControlPlaneSpec{
-			Version: "v1.16.6",
-		},
-	}
-
-	infraRef := &corev1.ObjectReference{
-		Kind:       "InfraKind",
-		APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
-		Name:       "infra",
-		Namespace:  cluster.Namespace,
-	}
-	bootstrapRef := &corev1.ObjectReference{
-		Kind:       "BootstrapKind",
-		APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
-		Name:       "bootstrap",
-		Namespace:  cluster.Namespace,
-	}
-	expectedMachineSpec := clusterv1.MachineSpec{
-		ClusterName: cluster.Name,
-		Version:     utilpointer.StringPtr(kcp.Spec.Version),
-		Bootstrap: clusterv1.Bootstrap{
-			ConfigRef: bootstrapRef.DeepCopy(),
-		},
-		InfrastructureRef: *infraRef.DeepCopy(),
-	}
-	r := &KubeadmControlPlaneReconciler{
-		Client:            fakeClient,
-		Log:               log.Log,
-		managementCluster: &internal.Management{Client: fakeClient},
-		recorder:          record.NewFakeRecorder(32),
-	}
-	g.Expect(r.generateMachine(context.Background(), kcp, cluster, infraRef, bootstrapRef, nil)).To(Succeed())
-
-	machineList := &clusterv1.MachineList{}
-	g.Expect(fakeClient.List(context.Background(), machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
-	g.Expect(machineList.Items).NotTo(BeEmpty())
-	g.Expect(machineList.Items).To(HaveLen(1))
-	machine := machineList.Items[0]
-	g.Expect(machine.Name).To(HavePrefix(kcp.Name))
-	g.Expect(machine.Namespace).To(Equal(kcp.Namespace))
-	g.Expect(machine.Labels).To(Equal(internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec))))
-	g.Expect(machine.OwnerReferences).To(HaveLen(1))
-	g.Expect(machine.OwnerReferences).To(ContainElement(*metav1.NewControllerRef(kcp, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane"))))
-	g.Expect(machine.Spec).To(Equal(expectedMachineSpec))
-}
-
-func TestKubeadmControlPlaneReconciler_generateKubeadmConfig(t *testing.T) {
-	g := NewWithT(t)
-	fakeClient := newFakeClient(g)
-
-	cluster := &clusterv1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "testCluster",
-			Namespace: "test",
-		},
-	}
-
-	kcp := &controlplanev1.KubeadmControlPlane{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "testControlPlane",
-			Namespace: cluster.Namespace,
-		},
-	}
-
-	spec := bootstrapv1.KubeadmConfigSpec{}
-	expectedReferenceKind := "KubeadmConfig"
-	expectedReferenceAPIVersion := bootstrapv1.GroupVersion.String()
-	expectedOwner := metav1.OwnerReference{
-		Kind:       "KubeadmControlPlane",
-		APIVersion: controlplanev1.GroupVersion.String(),
-		Name:       kcp.Name,
-	}
-
-	r := &KubeadmControlPlaneReconciler{
-		Client:   fakeClient,
-		Log:      log.Log,
-		recorder: record.NewFakeRecorder(32),
-	}
-
-	got, err := r.generateKubeadmConfig(context.Background(), kcp, cluster, spec.DeepCopy())
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(got).NotTo(BeNil())
-	g.Expect(got.Name).To(HavePrefix(kcp.Name))
-	g.Expect(got.Namespace).To(Equal(kcp.Namespace))
-	g.Expect(got.Kind).To(Equal(expectedReferenceKind))
-	g.Expect(got.APIVersion).To(Equal(expectedReferenceAPIVersion))
-
-	bootstrapConfig := &bootstrapv1.KubeadmConfig{}
-	key := client.ObjectKey{Name: got.Name, Namespace: got.Namespace}
-	g.Expect(fakeClient.Get(context.Background(), key, bootstrapConfig)).To(Succeed())
-	g.Expect(bootstrapConfig.Labels).To(Equal(internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec))))
-	g.Expect(bootstrapConfig.OwnerReferences).To(HaveLen(1))
-	g.Expect(bootstrapConfig.OwnerReferences).To(ContainElement(expectedOwner))
-	g.Expect(bootstrapConfig.Spec).To(Equal(spec))
-}
-
 // TODO
 func TestReconcileExternalReference(t *testing.T) {}
-
-// TODO
-func TestCleanupFromGeneration(t *testing.T) {}
 
 // TODO
 func TestMarkWithAnnotationKey(t *testing.T) {}

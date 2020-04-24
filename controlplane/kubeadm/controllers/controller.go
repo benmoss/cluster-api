@@ -64,6 +64,7 @@ type KubeadmControlPlaneReconciler struct {
 	recorder   record.EventRecorder
 
 	managementCluster internal.ManagementCluster
+	*ScaleController
 }
 
 func (r *KubeadmControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
@@ -87,6 +88,12 @@ func (r *KubeadmControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, optio
 
 	if r.managementCluster == nil {
 		r.managementCluster = &internal.Management{Client: r.Client}
+	}
+
+	r.ScaleController = &ScaleController{
+		Client:            r.Client,
+		managementCluster: r.managementCluster,
+		recorder:          r.recorder,
 	}
 
 	return nil
@@ -235,16 +242,16 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 	case numMachines < desiredReplicas && numMachines == 0:
 		// Create new Machine w/ init
 		logger.Info("Initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
-		return r.initializeControlPlane(ctx, cluster, kcp, controlPlane)
+		return r.Initialize(ctx, cluster, kcp, controlPlane)
 	// We are scaling up
 	case numMachines < desiredReplicas && numMachines > 0:
 		// Create a new Machine w/ join
 		logger.Info("Scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
-		return r.scaleUpControlPlane(ctx, cluster, kcp, controlPlane)
+		return r.ScaleUp(ctx, cluster, kcp, controlPlane)
 	// We are scaling down
 	case numMachines > desiredReplicas:
 		logger.Info("Scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
-		return r.scaleDownControlPlane(ctx, cluster, kcp, controlPlane)
+		return r.ScaleDown(ctx, cluster, kcp, controlPlane)
 	}
 
 	// Get the workload cluster client.
@@ -325,40 +332,6 @@ func (r *KubeadmControlPlaneReconciler) ClusterToKubeadmControlPlane(o handler.M
 	controlPlaneRef := c.Spec.ControlPlaneRef
 	if controlPlaneRef != nil && controlPlaneRef.Kind == "KubeadmControlPlane" {
 		return []ctrl.Request{{NamespacedName: client.ObjectKey{Namespace: controlPlaneRef.Namespace, Name: controlPlaneRef.Name}}}
-	}
-
-	return nil
-}
-
-// reconcileHealth performs health checks for control plane components and etcd
-// It removes any etcd members that do not have a corresponding node.
-func (r *KubeadmControlPlaneReconciler) reconcileHealth(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, controlPlane *internal.ControlPlane) error {
-	logger := controlPlane.Logger()
-
-	// Do a health check of the Control Plane components
-	if err := r.managementCluster.TargetClusterControlPlaneIsHealthy(ctx, util.ObjectKey(cluster), kcp.Name); err != nil {
-		logger.V(2).Info("Waiting for control plane to pass control plane health check to continue reconciliation", "cause", err)
-		r.recorder.Eventf(kcp, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
-			"Waiting for control plane to pass control plane health check to continue reconciliation: %v", err)
-		return &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
-	}
-
-	// Ensure etcd is healthy
-	if err := r.managementCluster.TargetClusterEtcdIsHealthy(ctx, util.ObjectKey(cluster), kcp.Name); err != nil {
-		// If there are any etcd members that do not have corresponding nodes, remove them from etcd and from the kubeadm configmap.
-		// This will solve issues related to manual control-plane machine deletion.
-		workloadCluster, err := r.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(cluster))
-		if err != nil {
-			return err
-		}
-		if err := workloadCluster.ReconcileEtcdMembers(ctx); err != nil {
-			logger.V(2).Info("Failed attempt to remove potential hanging etcd members to pass etcd health check to continue reconciliation", "cause", err)
-		}
-
-		logger.V(2).Info("Waiting for control plane to pass etcd health check to continue reconciliation", "cause", err)
-		r.recorder.Eventf(kcp, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
-			"Waiting for control plane to pass etcd health check to continue reconciliation: %v", err)
-		return &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
 	}
 
 	return nil

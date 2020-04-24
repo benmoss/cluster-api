@@ -516,6 +516,9 @@ kubernetesVersion: metav1.16.1`,
 		Log:      log.Log,
 		scheme:   scheme.Scheme,
 		recorder: record.NewFakeRecorder(32),
+		ScaleController: &ScaleController{
+			Client: fakeClient,
+		},
 		managementCluster: &fakeManagementCluster{
 			Management: &internal.Management{Client: fakeClient},
 			Workload: fakeWorkloadCluster{

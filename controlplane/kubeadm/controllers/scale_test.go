@@ -25,31 +25,32 @@ import (
 	. "github.com/onsi/gomega"
 	. "sigs.k8s.io/cluster-api/test/helpers"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	capierrors "sigs.k8s.io/cluster-api/errors"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/hash"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
+func TestScaleController_Initialize(t *testing.T) {
 	g := NewWithT(t)
 
 	cluster, kcp, genericMachineTemplate := createClusterWithControlPlane()
 
 	fakeClient := newFakeClient(g, cluster.DeepCopy(), kcp.DeepCopy(), genericMachineTemplate.DeepCopy())
 
-	r := &KubeadmControlPlaneReconciler{
+	r := &ScaleController{
 		Client:   fakeClient,
-		Log:      log.Log,
 		recorder: record.NewFakeRecorder(32),
 	}
 	controlPlane := &internal.ControlPlane{
@@ -57,7 +58,7 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 		KCP:     kcp,
 	}
 
-	result, err := r.initializeControlPlane(context.Background(), cluster, kcp, controlPlane)
+	result, err := r.Initialize(context.Background(), cluster, kcp, controlPlane)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	g.Expect(err).NotTo(HaveOccurred())
 
@@ -80,7 +81,7 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 	g.Expect(machineList.Items[0].Spec.Bootstrap.ConfigRef.Kind).To(Equal("KubeadmConfig"))
 }
 
-func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
+func TestScaleController_ScaleUp(t *testing.T) {
 	t.Run("creates a control plane Machine if health checks pass", func(t *testing.T) {
 		g := NewWithT(t)
 
@@ -101,10 +102,9 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 
 		fakeClient := newFakeClient(g, initObjs...)
 
-		r := &KubeadmControlPlaneReconciler{
+		r := &ScaleController{
 			Client:            fakeClient,
 			managementCluster: fmc,
-			Log:               log.Log,
 			recorder:          record.NewFakeRecorder(32),
 		}
 		controlPlane := &internal.ControlPlane{
@@ -113,7 +113,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 			Machines: fmc.Machines,
 		}
 
-		result, err := r.scaleUpControlPlane(context.Background(), cluster, kcp, controlPlane)
+		result, err := r.ScaleUp(context.Background(), cluster, kcp, controlPlane)
 		g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 		g.Expect(err).ToNot(HaveOccurred())
 
@@ -156,10 +156,9 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 				EtcdHealthy:         !tc.etcdUnHealthy,
 			}
 
-			r := &KubeadmControlPlaneReconciler{
+			r := &ScaleController{
 				Client:            fakeClient,
 				managementCluster: fmc,
-				Log:               log.Log,
 				recorder:          record.NewFakeRecorder(32),
 			}
 			controlPlane := &internal.ControlPlane{
@@ -168,7 +167,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 				Machines: beforeMachines,
 			}
 
-			_, err := r.scaleUpControlPlane(context.Background(), cluster.DeepCopy(), kcp.DeepCopy(), controlPlane)
+			_, err := r.ScaleUp(context.Background(), cluster.DeepCopy(), kcp.DeepCopy(), controlPlane)
 			g.Expect(err).To(HaveOccurred())
 			g.Expect(err).To(MatchError(&capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}))
 
@@ -186,15 +185,14 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 	})
 }
 
-func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.T) {
+func TestScaleController_ScaleDown_NoError(t *testing.T) {
 	g := NewWithT(t)
 
 	machines := map[string]*clusterv1.Machine{
 		"one": Machine("one"),
 	}
 
-	r := &KubeadmControlPlaneReconciler{
-		Log:      log.Log,
+	r := &ScaleController{
 		recorder: record.NewFakeRecorder(32),
 		Client:   newFakeClient(g, machines["one"]),
 		managementCluster: &fakeManagementCluster{
@@ -210,7 +208,7 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 		Machines: machines,
 	}
 
-	_, err := r.scaleDownControlPlane(context.Background(), cluster, kcp, controlPlane)
+	_, err := r.ScaleDown(context.Background(), cluster, kcp, controlPlane)
 	g.Expect(err).ToNot(HaveOccurred())
 }
 
@@ -288,3 +286,116 @@ func failureDomain(controlPlane bool) clusterv1.FailureDomainSpec {
 		ControlPlane: controlPlane,
 	}
 }
+
+func TestScaleController_generateMachine(t *testing.T) {
+	g := NewWithT(t)
+	fakeClient := newFakeClient(g)
+
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "testCluster",
+			Namespace: "test",
+		},
+	}
+
+	kcp := &controlplanev1.KubeadmControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "testControlPlane",
+			Namespace: cluster.Namespace,
+		},
+		Spec: controlplanev1.KubeadmControlPlaneSpec{
+			Version: "v1.16.6",
+		},
+	}
+
+	infraRef := &corev1.ObjectReference{
+		Kind:       "InfraKind",
+		APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
+		Name:       "infra",
+		Namespace:  cluster.Namespace,
+	}
+	bootstrapRef := &corev1.ObjectReference{
+		Kind:       "BootstrapKind",
+		APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
+		Name:       "bootstrap",
+		Namespace:  cluster.Namespace,
+	}
+	expectedMachineSpec := clusterv1.MachineSpec{
+		ClusterName: cluster.Name,
+		Version:     pointer.StringPtr(kcp.Spec.Version),
+		Bootstrap: clusterv1.Bootstrap{
+			ConfigRef: bootstrapRef.DeepCopy(),
+		},
+		InfrastructureRef: *infraRef.DeepCopy(),
+	}
+	r := &ScaleController{
+		Client:            fakeClient,
+		managementCluster: &internal.Management{Client: fakeClient},
+		recorder:          record.NewFakeRecorder(32),
+	}
+	g.Expect(r.generateMachine(context.Background(), kcp, cluster, infraRef, bootstrapRef, nil)).To(Succeed())
+
+	machineList := &clusterv1.MachineList{}
+	g.Expect(fakeClient.List(context.Background(), machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
+	g.Expect(machineList.Items).NotTo(BeEmpty())
+	g.Expect(machineList.Items).To(HaveLen(1))
+	machine := machineList.Items[0]
+	g.Expect(machine.Name).To(HavePrefix(kcp.Name))
+	g.Expect(machine.Namespace).To(Equal(kcp.Namespace))
+	g.Expect(machine.Labels).To(Equal(internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec))))
+	g.Expect(machine.OwnerReferences).To(HaveLen(1))
+	g.Expect(machine.OwnerReferences).To(ContainElement(*metav1.NewControllerRef(kcp, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane"))))
+	g.Expect(machine.Spec).To(Equal(expectedMachineSpec))
+}
+
+func TestScaleController_generateKubeadmConfig(t *testing.T) {
+	g := NewWithT(t)
+	fakeClient := newFakeClient(g)
+
+	cluster := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "testCluster",
+			Namespace: "test",
+		},
+	}
+
+	kcp := &controlplanev1.KubeadmControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "testControlPlane",
+			Namespace: cluster.Namespace,
+		},
+	}
+
+	spec := bootstrapv1.KubeadmConfigSpec{}
+	expectedReferenceKind := "KubeadmConfig"
+	expectedReferenceAPIVersion := bootstrapv1.GroupVersion.String()
+	expectedOwner := metav1.OwnerReference{
+		Kind:       "KubeadmControlPlane",
+		APIVersion: controlplanev1.GroupVersion.String(),
+		Name:       kcp.Name,
+	}
+
+	r := &ScaleController{
+		Client:   fakeClient,
+		recorder: record.NewFakeRecorder(32),
+	}
+
+	got, err := r.generateKubeadmConfig(context.Background(), kcp, cluster, spec.DeepCopy())
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(got).NotTo(BeNil())
+	g.Expect(got.Name).To(HavePrefix(kcp.Name))
+	g.Expect(got.Namespace).To(Equal(kcp.Namespace))
+	g.Expect(got.Kind).To(Equal(expectedReferenceKind))
+	g.Expect(got.APIVersion).To(Equal(expectedReferenceAPIVersion))
+
+	bootstrapConfig := &bootstrapv1.KubeadmConfig{}
+	key := client.ObjectKey{Name: got.Name, Namespace: got.Namespace}
+	g.Expect(fakeClient.Get(context.Background(), key, bootstrapConfig)).To(Succeed())
+	g.Expect(bootstrapConfig.Labels).To(Equal(internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec))))
+	g.Expect(bootstrapConfig.OwnerReferences).To(HaveLen(1))
+	g.Expect(bootstrapConfig.OwnerReferences).To(ContainElement(expectedOwner))
+	g.Expect(bootstrapConfig.Spec).To(Equal(spec))
+}
+
+// TODO
+func TestCleanupFromGeneration(t *testing.T) {}
