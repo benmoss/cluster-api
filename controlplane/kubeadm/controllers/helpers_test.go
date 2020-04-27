@@ -31,6 +31,7 @@ import (
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
 	kubeadmv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	"sigs.k8s.io/cluster-api/util/secret"
@@ -147,7 +148,6 @@ func TestReconcileKubeconfigSecretAlreadyExists(t *testing.T) {
 	g.Expect(kubeconfigSecret.Labels).To(Equal(existingKubeconfigSecret.Labels))
 	g.Expect(kubeconfigSecret.Data).To(Equal(existingKubeconfigSecret.Data))
 	g.Expect(kubeconfigSecret.OwnerReferences).NotTo(ContainElement(*metav1.NewControllerRef(kcp, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane"))))
-
 }
 
 func TestKubeadmControlPlaneReconciler_reconcileKubeconfig(t *testing.T) {
@@ -242,6 +242,10 @@ func TestCloneConfigsAndGenerateMachine(t *testing.T) {
 			Version: "v1.16.6",
 		},
 	}
+	controlPlane := &internal.ControlPlane{
+		KCP:     kcp,
+		Cluster: cluster,
+	}
 
 	fakeClient := newFakeClient(g, cluster.DeepCopy(), kcp.DeepCopy(), genericMachineTemplate.DeepCopy())
 
@@ -255,10 +259,7 @@ func TestCloneConfigsAndGenerateMachine(t *testing.T) {
 		},
 	}
 
-	bootstrapSpec := &bootstrapv1.KubeadmConfigSpec{
-		JoinConfiguration: &kubeadmv1.JoinConfiguration{},
-	}
-	g.Expect(r.cloneConfigsAndGenerateMachine(context.Background(), cluster, kcp, bootstrapSpec, nil)).To(Succeed())
+	g.Expect(r.cloneConfigsAndGenerateMachine(context.Background(), controlPlane)).To(Succeed())
 
 	machineList := &clusterv1.MachineList{}
 	g.Expect(fakeClient.List(context.Background(), machineList, client.InNamespace(cluster.Namespace))).To(Succeed())

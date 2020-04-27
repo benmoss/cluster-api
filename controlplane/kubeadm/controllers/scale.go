@@ -45,14 +45,12 @@ type ScaleController struct {
 	recorder          record.EventRecorder
 }
 
-func (s *ScaleController) Initialize(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
+func (s *ScaleController) Initialize(ctx context.Context, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
 	logger := controlPlane.Logger()
 
-	bootstrapSpec := controlPlane.InitialControlPlaneConfig()
-	fd := controlPlane.FailureDomainWithFewestMachines()
-	if err := s.cloneConfigsAndGenerateMachine(ctx, cluster, kcp, bootstrapSpec, fd); err != nil {
+	if err := s.cloneConfigsAndGenerateMachine(ctx, controlPlane); err != nil {
 		logger.Error(err, "Failed to create initial control plane Machine")
-		s.recorder.Eventf(kcp, corev1.EventTypeWarning, "FailedInitialization", "Failed to create initial control plane Machine for cluster %s/%s control plane: %v", cluster.Namespace, cluster.Name, err)
+		s.recorder.Eventf(controlPlane.KCP, corev1.EventTypeWarning, "FailedInitialization", "Failed to create initial control plane Machine for cluster %s/%s control plane: %v", controlPlane.Cluster.Namespace, controlPlane.Cluster.Name, err)
 		return ctrl.Result{}, err
 	}
 
@@ -60,19 +58,17 @@ func (s *ScaleController) Initialize(ctx context.Context, cluster *clusterv1.Clu
 	return ctrl.Result{Requeue: true}, nil
 }
 
-func (s *ScaleController) ScaleUp(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
+func (s *ScaleController) ScaleUp(ctx context.Context, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
 	logger := controlPlane.Logger()
 
-	if err := s.reconcileHealth(ctx, cluster, kcp, controlPlane); err != nil {
+	if err := s.reconcileHealth(ctx, controlPlane); err != nil {
 		return ctrl.Result{}, &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
 	}
 
 	// Create the bootstrap configuration
-	bootstrapSpec := controlPlane.JoinControlPlaneConfig()
-	fd := controlPlane.FailureDomainWithFewestMachines()
-	if err := s.cloneConfigsAndGenerateMachine(ctx, cluster, kcp, bootstrapSpec, fd); err != nil {
+	if err := s.cloneConfigsAndGenerateMachine(ctx, controlPlane); err != nil {
 		logger.Error(err, "Failed to create additional control plane Machine")
-		s.recorder.Eventf(kcp, corev1.EventTypeWarning, "FailedScaleUp", "Failed to create additional control plane Machine for cluster %s/%s control plane: %v", cluster.Namespace, cluster.Name, err)
+		s.recorder.Eventf(controlPlane.KCP, corev1.EventTypeWarning, "FailedScaleUp", "Failed to create additional control plane Machine for cluster %s/%s control plane: %v", controlPlane.Cluster.Namespace, controlPlane.Cluster.Name, err)
 		return ctrl.Result{}, err
 	}
 
@@ -80,15 +76,10 @@ func (s *ScaleController) ScaleUp(ctx context.Context, cluster *clusterv1.Cluste
 	return ctrl.Result{Requeue: true}, nil
 }
 
-func (s *ScaleController) ScaleDown(
-	ctx context.Context,
-	cluster *clusterv1.Cluster,
-	kcp *controlplanev1.KubeadmControlPlane,
-	controlPlane *internal.ControlPlane,
-) (ctrl.Result, error) {
+func (s *ScaleController) ScaleDown(ctx context.Context, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
 	logger := controlPlane.Logger()
 
-	workloadCluster, err := s.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(cluster))
+	workloadCluster, err := s.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(controlPlane.Cluster))
 	if err != nil {
 		logger.Error(err, "Failed to create client to workload cluster")
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create client to workload cluster")
@@ -99,7 +90,7 @@ func (s *ScaleController) ScaleDown(
 		return ctrl.Result{}, &capierrors.RequeueAfterError{RequeueAfter: deleteRequeueAfter}
 	}
 
-	if err := s.reconcileHealth(ctx, cluster, kcp, controlPlane); err != nil {
+	if err := s.reconcileHealth(ctx, controlPlane); err != nil {
 		return ctrl.Result{}, &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
 	}
 
@@ -124,9 +115,9 @@ func (s *ScaleController) ScaleDown(
 		return ctrl.Result{}, err
 	}
 
-	if err := s.managementCluster.TargetClusterControlPlaneIsHealthy(ctx, util.ObjectKey(cluster), kcp.Name); err != nil {
+	if err := s.managementCluster.TargetClusterControlPlaneIsHealthy(ctx, util.ObjectKey(controlPlane.Cluster), controlPlane.KCP.Name); err != nil {
 		logger.V(2).Info("Waiting for control plane to pass control plane health check before removing a control plane machine", "cause", err)
-		s.recorder.Eventf(kcp, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
+		s.recorder.Eventf(controlPlane.KCP, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
 			"Waiting for control plane to pass control plane health check before removing a control plane machine: %v", err)
 		return ctrl.Result{}, &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
 
@@ -139,8 +130,8 @@ func (s *ScaleController) ScaleDown(
 	logger = logger.WithValues("machine", machineToDelete)
 	if err := s.Client.Delete(ctx, machineToDelete); err != nil && !apierrors.IsNotFound(err) {
 		logger.Error(err, "Failed to delete control plane machine")
-		s.recorder.Eventf(kcp, corev1.EventTypeWarning, "FailedScaleDown",
-			"Failed to delete control plane Machine %s for cluster %s/%s control plane: %v", machineToDelete.Name, cluster.Namespace, cluster.Name, err)
+		s.recorder.Eventf(controlPlane.KCP, corev1.EventTypeWarning, "FailedScaleDown",
+			"Failed to delete control plane Machine %s for cluster %s/%s control plane: %v", machineToDelete.Name, controlPlane.Cluster.Namespace, controlPlane.Cluster.Name, err)
 		return ctrl.Result{}, err
 	}
 
@@ -148,7 +139,7 @@ func (s *ScaleController) ScaleDown(
 	return ctrl.Result{Requeue: true}, nil
 }
 
-func (s *ScaleController) cloneConfigsAndGenerateMachine(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, bootstrapSpec *bootstrapv1.KubeadmConfigSpec, failureDomain *string) error {
+func (s *ScaleController) cloneConfigsAndGenerateMachine(ctx context.Context, controlPlane *internal.ControlPlane) error {
 	var errs []error
 
 	// Since the cloned resource should eventually have a controller ref for the Machine, we create an
@@ -156,18 +147,18 @@ func (s *ScaleController) cloneConfigsAndGenerateMachine(ctx context.Context, cl
 	infraCloneOwner := &metav1.OwnerReference{
 		APIVersion: controlplanev1.GroupVersion.String(),
 		Kind:       "KubeadmControlPlane",
-		Name:       kcp.Name,
-		UID:        kcp.UID,
+		Name:       controlPlane.KCP.Name,
+		UID:        controlPlane.KCP.UID,
 	}
 
 	// Clone the infrastructure template
 	infraRef, err := external.CloneTemplate(ctx, &external.CloneTemplateInput{
 		Client:      s.Client,
-		TemplateRef: &kcp.Spec.InfrastructureTemplate,
-		Namespace:   kcp.Namespace,
+		TemplateRef: &controlPlane.KCP.Spec.InfrastructureTemplate,
+		Namespace:   controlPlane.KCP.Namespace,
 		OwnerRef:    infraCloneOwner,
-		ClusterName: cluster.Name,
-		Labels:      internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec)),
+		ClusterName: controlPlane.Cluster.Name,
+		Labels:      internal.ControlPlaneLabelsForClusterWithHash(controlPlane.Cluster.Name, hash.Compute(&controlPlane.KCP.Spec)),
 	})
 	if err != nil {
 		// Safe to return early here since no resources have been created yet.
@@ -175,14 +166,14 @@ func (s *ScaleController) cloneConfigsAndGenerateMachine(ctx context.Context, cl
 	}
 
 	// Clone the bootstrap configuration
-	bootstrapRef, err := s.generateKubeadmConfig(ctx, kcp, cluster, bootstrapSpec)
+	bootstrapRef, err := s.generateKubeadmConfig(ctx, controlPlane)
 	if err != nil {
 		errs = append(errs, errors.Wrap(err, "failed to generate bootstrap config"))
 	}
 
 	// Only proceed to generating the Machine if we haven't encountered an error
 	if len(errs) == 0 {
-		if err := s.generateMachine(ctx, kcp, cluster, infraRef, bootstrapRef, failureDomain); err != nil {
+		if err := s.generateMachine(ctx, controlPlane, infraRef, bootstrapRef); err != nil {
 			errs = append(errs, errors.Wrap(err, "failed to create Machine"))
 		}
 	}
@@ -199,23 +190,23 @@ func (s *ScaleController) cloneConfigsAndGenerateMachine(ctx context.Context, cl
 	return nil
 }
 
-func (s *ScaleController) generateKubeadmConfig(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane, cluster *clusterv1.Cluster, spec *bootstrapv1.KubeadmConfigSpec) (*corev1.ObjectReference, error) {
+func (s *ScaleController) generateKubeadmConfig(ctx context.Context, controlPlane *internal.ControlPlane) (*corev1.ObjectReference, error) {
 	// Create an owner reference without a controller reference because the owning controller is the machine controller
 	owner := metav1.OwnerReference{
 		APIVersion: controlplanev1.GroupVersion.String(),
 		Kind:       "KubeadmControlPlane",
-		Name:       kcp.Name,
-		UID:        kcp.UID,
+		Name:       controlPlane.KCP.Name,
+		UID:        controlPlane.KCP.UID,
 	}
 
 	bootstrapConfig := &bootstrapv1.KubeadmConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            names.SimpleNameGenerator.GenerateName(kcp.Name + "-"),
-			Namespace:       kcp.Namespace,
-			Labels:          internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec)),
+			Name:            names.SimpleNameGenerator.GenerateName(controlPlane.KCP.Name + "-"),
+			Namespace:       controlPlane.KCP.Namespace,
+			Labels:          internal.ControlPlaneLabelsForClusterWithHash(controlPlane.Cluster.Name, hash.Compute(&controlPlane.KCP.Spec)),
 			OwnerReferences: []metav1.OwnerReference{owner},
 		},
-		Spec: *spec,
+		Spec: *controlPlane.JoinControlPlaneConfig(),
 	}
 
 	if err := s.Client.Create(ctx, bootstrapConfig); err != nil {
@@ -233,24 +224,24 @@ func (s *ScaleController) generateKubeadmConfig(ctx context.Context, kcp *contro
 	return bootstrapRef, nil
 }
 
-func (s *ScaleController) generateMachine(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane, cluster *clusterv1.Cluster, infraRef, bootstrapRef *corev1.ObjectReference, failureDomain *string) error {
+func (s *ScaleController) generateMachine(ctx context.Context, controlPlane *internal.ControlPlane, infraRef, bootstrapRef *corev1.ObjectReference) error {
 	machine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      names.SimpleNameGenerator.GenerateName(kcp.Name + "-"),
-			Namespace: kcp.Namespace,
-			Labels:    internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec)),
+			Name:      names.SimpleNameGenerator.GenerateName(controlPlane.KCP.Name + "-"),
+			Namespace: controlPlane.KCP.Namespace,
+			Labels:    internal.ControlPlaneLabelsForClusterWithHash(controlPlane.Cluster.Name, hash.Compute(&controlPlane.KCP.Spec)),
 			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(kcp, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane")),
+				*metav1.NewControllerRef(controlPlane.KCP, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane")),
 			},
 		},
 		Spec: clusterv1.MachineSpec{
-			ClusterName:       cluster.Name,
-			Version:           &kcp.Spec.Version,
+			ClusterName:       controlPlane.Cluster.Name,
+			Version:           &controlPlane.KCP.Spec.Version,
 			InfrastructureRef: *infraRef,
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: bootstrapRef,
 			},
-			FailureDomain: failureDomain,
+			FailureDomain: controlPlane.FailureDomainWithFewestMachines(),
 		},
 	}
 
@@ -282,22 +273,22 @@ func (s *ScaleController) cleanupFromGeneration(ctx context.Context, remoteRefs 
 
 // reconcileHealth performs health checks for control plane components and etcd
 // It removes any etcd members that do not have a corresponding node.
-func (s *ScaleController) reconcileHealth(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, controlPlane *internal.ControlPlane) error {
+func (s *ScaleController) reconcileHealth(ctx context.Context, controlPlane *internal.ControlPlane) error {
 	logger := controlPlane.Logger()
 
 	// Do a health check of the Control Plane components
-	if err := s.managementCluster.TargetClusterControlPlaneIsHealthy(ctx, util.ObjectKey(cluster), kcp.Name); err != nil {
+	if err := s.managementCluster.TargetClusterControlPlaneIsHealthy(ctx, util.ObjectKey(controlPlane.Cluster), controlPlane.KCP.Name); err != nil {
 		logger.V(2).Info("Waiting for control plane to pass control plane health check to continue reconciliation", "cause", err)
-		s.recorder.Eventf(kcp, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
+		s.recorder.Eventf(controlPlane.KCP, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
 			"Waiting for control plane to pass control plane health check to continue reconciliation: %v", err)
 		return &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
 	}
 
 	// Ensure etcd is healthy
-	if err := s.managementCluster.TargetClusterEtcdIsHealthy(ctx, util.ObjectKey(cluster), kcp.Name); err != nil {
+	if err := s.managementCluster.TargetClusterEtcdIsHealthy(ctx, util.ObjectKey(controlPlane.Cluster), controlPlane.KCP.Name); err != nil {
 		// If there are any etcd members that do not have corresponding nodes, remove them from etcd and from the kubeadm configmap.
 		// This will solve issues related to manual control-plane machine deletion.
-		workloadCluster, err := s.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(cluster))
+		workloadCluster, err := s.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(controlPlane.Cluster))
 		if err != nil {
 			return err
 		}
@@ -306,7 +297,7 @@ func (s *ScaleController) reconcileHealth(ctx context.Context, cluster *clusterv
 		}
 
 		logger.V(2).Info("Waiting for control plane to pass etcd health check to continue reconciliation", "cause", err)
-		s.recorder.Eventf(kcp, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
+		s.recorder.Eventf(controlPlane.KCP, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
 			"Waiting for control plane to pass etcd health check to continue reconciliation: %v", err)
 		return &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
 	}
