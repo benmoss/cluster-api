@@ -211,7 +211,6 @@ func (r *MachineSetReconciler) reconcile(ctx context.Context, cluster *clusterv1
 		return ctrl.Result{}, errors.Wrap(err, "failed to list machines")
 	}
 
-	var anyDeleted bool
 	var errs []error
 	for i := range allMachines.Items {
 		machine := allMachines.Items[i]
@@ -223,19 +222,13 @@ func (r *MachineSetReconciler) reconcile(ctx context.Context, cluster *clusterv1
 		if err := r.Client.Delete(ctx, &machine); err != nil {
 			errs = append(errs, err)
 		}
-
-		anyDeleted = true
 	}
 	err = kerrors.NewAggregate(errs)
 
 	if err != nil {
 		logger.Info("Failed while deleting unhealthy machines", "err", err)
 		return ctrl.Result{}, errors.Wrap(err, "failed to remediate machines")
-	} else if anyDeleted {
-		// Do not do any other operations while waiting for deletion to finish
-		return ctrl.Result{}, nil
 	}
-
 	// Filter out irrelevant machines (deleting/mismatch labels) and claim orphaned machines.
 	filteredMachines := make([]*clusterv1.Machine, 0, len(allMachines.Items))
 	for idx := range allMachines.Items {
