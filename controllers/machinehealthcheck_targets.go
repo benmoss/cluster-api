@@ -279,31 +279,13 @@ func (t *healthCheckTarget) remediate(ctx context.Context, logger logr.Logger, c
 	logger = logger.WithValues("target", t.string())
 	logger.Info("Starting remediation for target")
 
-	// If the machine is not owned by a MachineSet, it should be skipped
-	hasOwner, err := t.hasMachineSetOwner()
+	owner, err := t.getMachineOwner()
 	if err != nil {
-		return fmt.Errorf("%s: unable to determine Machine owners: %v", t.string(), err)
-	}
-	if !hasOwner {
-		logger.Info("Target has no machineset owner, skipping remediation")
-		return nil
-	}
-
-	// If the machine is a control plane node, it should be skipped
-	if t.isControlPlane() {
-		r.Eventf(
-			t.Machine,
-			corev1.EventTypeNormal,
-			EventSkippedControlPlane,
-			"Machine %v is a control plane node, skipping remediation",
-			t.string(),
-		)
-		logger.Info("Target is a control plane node, skipping remediation")
-		return nil
+		return fmt.Errorf("%s: unable to find owner for machine: %v", t.string(), err)
 	}
 
 	logger.Info("Deleting target machine")
-	if err := c.Delete(ctx, t.Machine); err != nil {
+	if err := owner.Delete(ctx, t.Machine); err != nil {
 		r.Eventf(
 			t.Machine,
 			corev1.EventTypeWarning,
