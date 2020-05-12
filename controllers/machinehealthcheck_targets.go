@@ -66,6 +66,7 @@ type healthCheckTarget struct {
 	Machine     *clusterv1.Machine
 	Node        *corev1.Node
 	MHC         *clusterv1.MachineHealthCheck
+	Remediator  Remediator
 	nodeMissing bool
 }
 
@@ -167,6 +168,14 @@ func (r *MachineHealthCheckReconciler) getTargetsFromMHC(clusterClient client.Cl
 		target := healthCheckTarget{
 			MHC:     mhc,
 			Machine: &machines[k],
+		}
+		for _, remediator := range r.Remediators {
+			if remediator.IsOwner(target.Machine) {
+				target.Remediator = remediator
+			}
+		}
+		if target.Remediator == nil {
+			return nil, fmt.Errorf("unable to find remediator for machine %s", target.Machine.Name)
 		}
 		node, err := r.getNodeFromMachine(clusterClient, target.Machine)
 		if err != nil {
@@ -289,13 +298,8 @@ func (t *healthCheckTarget) annotate(ctx context.Context, logger logr.Logger, c 
 		return errors.Wrapf(err, "failed to create patch helper for machine %s", t.Machine.Name)
 	}
 
-	if t.Machine.Annotations == nil {
-		t.Machine.Annotations = make(map[string]string)
-	}
-	t.Machine.Annotations[clusterv1.MachineUnhealthy] = ""
-
-	logger.Info("Applying unhealthy annotation")
-	if err := patchHelper.Patch(ctx, t.Machine); err != nil {
+	logger.Info("Remediating machine")
+	if err := t.Remediator.Remediate(ctx, t.Machine); err != nil {
 		r.Eventf(
 			t.Machine,
 			corev1.EventTypeWarning,

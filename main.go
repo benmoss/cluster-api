@@ -210,10 +210,11 @@ func setupReconcilers(mgr ctrl.Manager) {
 		setupLog.Error(err, "unable to create controller", "controller", "Machine")
 		os.Exit(1)
 	}
-	if err := (&controllers.MachineSetReconciler{
+	machineSetCtrl := &controllers.MachineSetReconciler{
 		Client: mgr.GetClient(),
 		Log:    ctrl.Log.WithName("controllers").WithName("MachineSet"),
-	}).SetupWithManager(mgr, concurrency(machineSetConcurrency)); err != nil {
+	}
+	if err := machineSetCtrl.SetupWithManager(mgr, concurrency(machineSetConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MachineSet")
 		os.Exit(1)
 	}
@@ -235,8 +236,9 @@ func setupReconcilers(mgr ctrl.Manager) {
 		}
 	}
 	if err := (&controllers.MachineHealthCheckReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("MachineHealthCheck"),
+		Client:      mgr.GetClient(),
+		Log:         ctrl.Log.WithName("controllers").WithName("MachineHealthCheck"),
+		Remediators: []controllers.Remediator{machineSetCtrl},
 	}).SetupWithManager(mgr, concurrency(machineHealthCheckConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MachineHealthCheck")
 		os.Exit(1)

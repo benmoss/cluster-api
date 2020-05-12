@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/record"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
@@ -744,4 +745,35 @@ func reconcileExternalTemplateReference(ctx context.Context, c client.Client, cl
 		return err
 	}
 	return nil
+}
+
+func (r *MachineSetReconciler) IsOwner(machine *clusterv1.Machine) bool {
+	ownerRefs := machine.ObjectMeta.GetOwnerReferences()
+	for _, or := range ownerRefs {
+		if or.Kind == "MachineSet" {
+			// The Kind matches so check the Group matches as well
+			gv, err := schema.ParseGroupVersion(or.APIVersion)
+			if err != nil {
+				return false
+			}
+			if gv.Group == clusterv1.GroupVersion.Group {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *MachineSetReconciler) Remediate(ctx context.Context, machine *clusterv1.Machine) error {
+	if err := r.Client.Delete(ctx, machine); err != nil {
+		r.recorder.Eventf(
+			machine,
+			corev1.EventTypeWarning,
+			EventMachineDeletionFailed,
+			"Machine %v remediation failed: unable to delete Machine object: %v",
+			machine.Name,
+			err,
+		)
+		return fmt.Errorf("%s: failed to delete machine: %v", machine.Name, err)
+	}
 }

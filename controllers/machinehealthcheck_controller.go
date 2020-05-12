@@ -65,14 +65,20 @@ const (
 
 // MachineHealthCheckReconciler reconciles a MachineHealthCheck object
 type MachineHealthCheckReconciler struct {
-	Client client.Client
-	Log    logr.Logger
+	Client      client.Client
+	Log         logr.Logger
+	Remediators []Remediator
 
 	controller        controller.Controller
 	recorder          record.EventRecorder
 	scheme            *runtime.Scheme
 	clusterCaches     map[client.ObjectKey]cache.Cache
 	clusterCachesLock sync.RWMutex
+}
+
+type Remediator interface {
+	IsOwner(*clusterv1.Machine) bool
+	Remediate(context.Context, *clusterv1.Machine) error
 }
 
 func (r *MachineHealthCheckReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
