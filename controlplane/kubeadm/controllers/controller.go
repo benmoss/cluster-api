@@ -277,7 +277,16 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		return ctrl.Result{}, nil
 	}
 
-	controlPlane := internal.NewControlPlane(cluster, kcp, ownedMachines)
+	controlPlane := internal.NewControlPlane(cluster, kcp, ownedMachines, logger)
+	if controlPlane.HasOperationInProgress() {
+		return ctrl.Result{}, nil
+	}
+
+	if controlPlane.NeedsInitialization() {
+		logger.Info("Initializing control plane", "Desired", int(*kcp.Spec.Replicas), "Existing", len(ownedMachines))
+		conditions.MarkFalse(controlPlane.KCP, controlplanev1.AvailableCondition, controlplanev1.WaitingForKubeadmInitReason, clusterv1.ConditionSeverityInfo, "")
+		return r.initializeControlPlane(ctx, cluster, kcp, controlPlane)
+	}
 
 	// Aggregate the operational state of all the machines; while aggregating we are adding the
 	// source ref (reason@machine/name) so the problem can be easily tracked down to its source machine.
@@ -301,24 +310,21 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		}
 	}
 
+	if controlPlane.UnhealthyMachines().None() {
+		if err := r.reconcileHealth(ctx, cluster, kcp, controlPlane); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	// If we've made it this far, we can assume that all ownedMachines are up to date
 	numMachines := len(ownedMachines)
 	desiredReplicas := int(*kcp.Spec.Replicas)
 
 	switch {
-	// We are creating the first replica
-	case numMachines < desiredReplicas && numMachines == 0:
-		// Create new Machine w/ init
-		logger.Info("Initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
-		conditions.MarkFalse(controlPlane.KCP, controlplanev1.AvailableCondition, controlplanev1.WaitingForKubeadmInitReason, clusterv1.ConditionSeverityInfo, "")
-		return r.initializeControlPlane(ctx, cluster, kcp, controlPlane)
-	// We are scaling up
-	case numMachines < desiredReplicas && numMachines > 0:
-		// Create a new Machine w/ join
+	case controlPlane.NeedsScaleUp():
 		logger.Info("Scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 		return r.scaleUpControlPlane(ctx, cluster, kcp, controlPlane)
-	// We are scaling down
-	case numMachines > desiredReplicas:
+	case controlPlane.NeedsScaleDown():
 		logger.Info("Scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
 		return r.scaleDownControlPlane(ctx, cluster, kcp, controlPlane)
 	}
@@ -415,7 +421,7 @@ func (r *KubeadmControlPlaneReconciler) ClusterToKubeadmControlPlane(o handler.M
 // It removes any etcd members that do not have a corresponding node.
 // Also, as a final step, checks if there is any machines that is being deleted.
 func (r *KubeadmControlPlaneReconciler) reconcileHealth(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, controlPlane *internal.ControlPlane) error {
-	logger := controlPlane.Logger()
+	logger := controlPlane.Logger
 
 	// Do a health check of the Control Plane components
 	if err := r.managementCluster.TargetClusterControlPlaneIsHealthy(ctx, util.ObjectKey(cluster)); err != nil {

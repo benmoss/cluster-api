@@ -26,13 +26,12 @@ import (
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
-	capierrors "sigs.k8s.io/cluster-api/errors"
 	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 func (r *KubeadmControlPlaneReconciler) initializeControlPlane(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
-	logger := controlPlane.Logger()
+	logger := controlPlane.Logger
 
 	// Perform an uncached read of all the owned machines. This check is in place to make sure
 	// that the controller cache is not misbehaving and we end up initializing the cluster more than once.
@@ -61,12 +60,7 @@ func (r *KubeadmControlPlaneReconciler) initializeControlPlane(ctx context.Conte
 }
 
 func (r *KubeadmControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
-	logger := controlPlane.Logger()
-
-	// reconcileHealth returns err if there is a machine being delete which is a required condition to check before scaling up
-	if err := r.reconcileHealth(ctx, cluster, kcp, controlPlane); err != nil {
-		return ctrl.Result{}, &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
-	}
+	logger := controlPlane.Logger
 
 	// Create the bootstrap configuration
 	bootstrapSpec := controlPlane.JoinControlPlaneConfig()
@@ -87,11 +81,7 @@ func (r *KubeadmControlPlaneReconciler) scaleDownControlPlane(
 	kcp *controlplanev1.KubeadmControlPlane,
 	controlPlane *internal.ControlPlane,
 ) (ctrl.Result, error) {
-	logger := controlPlane.Logger()
-
-	if err := r.reconcileHealth(ctx, cluster, kcp, controlPlane); err != nil {
-		return ctrl.Result{}, &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
-	}
+	logger := controlPlane.Logger
 
 	workloadCluster, err := r.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(cluster))
 	if err != nil {
@@ -99,36 +89,25 @@ func (r *KubeadmControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create client to workload cluster")
 	}
 
-	machineToDelete, err := selectMachineForScaleDown(controlPlane)
-	if err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to select machine for scale down")
-	}
-
+	machineToDelete := controlPlane.NextMachineForScaleDown()
 	if machineToDelete == nil {
 		logger.Info("Failed to pick control plane Machine to delete")
 		return ctrl.Result{}, errors.New("failed to pick control plane Machine to delete")
 	}
 
+	if err := workloadCluster.RemoveMachineFromKubeadmConfigMap(ctx, machineToDelete); err != nil {
+		logger.Error(err, "Failed to remove machine from kubeadm ConfigMap")
+		return ctrl.Result{}, err
+	}
+
 	// If etcd leadership is on machine that is about to be deleted, move it to the newest member available.
-	etcdLeaderCandidate := controlPlane.Machines.Newest()
+	etcdLeaderCandidate := controlPlane.ReadyMachines().Newest()
 	if err := workloadCluster.ForwardEtcdLeadership(ctx, machineToDelete, etcdLeaderCandidate); err != nil {
 		logger.Error(err, "Failed to move leadership to candidate machine", "candidate", etcdLeaderCandidate.Name)
 		return ctrl.Result{}, err
 	}
 	if err := workloadCluster.RemoveEtcdMemberForMachine(ctx, machineToDelete); err != nil {
 		logger.Error(err, "Failed to remove etcd member for machine")
-		return ctrl.Result{}, err
-	}
-
-	if err := r.managementCluster.TargetClusterControlPlaneIsHealthy(ctx, util.ObjectKey(cluster)); err != nil {
-		logger.V(2).Info("Waiting for control plane to pass control plane health check before removing a control plane machine", "cause", err)
-		r.recorder.Eventf(kcp, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
-			"Waiting for control plane to pass control plane health check before removing a control plane machine: %v", err)
-		return ctrl.Result{}, &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
-
-	}
-	if err := workloadCluster.RemoveMachineFromKubeadmConfigMap(ctx, machineToDelete); err != nil {
-		logger.Error(err, "Failed to remove machine from kubeadm ConfigMap")
 		return ctrl.Result{}, err
 	}
 
@@ -142,12 +121,4 @@ func (r *KubeadmControlPlaneReconciler) scaleDownControlPlane(
 
 	// Requeue the control plane, in case there are additional operations to perform
 	return ctrl.Result{Requeue: true}, nil
-}
-
-func selectMachineForScaleDown(controlPlane *internal.ControlPlane) (*clusterv1.Machine, error) {
-	machines := controlPlane.Machines
-	if needingUpgrade := controlPlane.MachinesNeedingRollout(); needingUpgrade.Len() > 0 {
-		machines = needingUpgrade
-	}
-	return controlPlane.MachineInFailureDomainWithMostMachines(machines)
 }

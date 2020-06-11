@@ -20,11 +20,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
-	"sigs.k8s.io/cluster-api/util/conditions"
-
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -196,4 +195,21 @@ func ControlPlaneSelectorForCluster(clusterName string) labels.Selector {
 		must(labels.NewRequirement(clusterv1.ClusterLabelName, selection.Equals, []string{clusterName})),
 		must(labels.NewRequirement(clusterv1.MachineControlPlaneLabelName, selection.Exists, []string{})),
 	)
+}
+
+// NeedsRemediation returns whether the machine has the
+// MachineOwnerRemediatedCondition set to false.
+func NeedsRemediation(m *clusterv1.Machine) bool {
+	return conditions.IsFalse(m, clusterv1.MachineOwnerRemediatedCondition)
+}
+
+// IsProvisioning returns whether the machine is missing its NodeRef or does
+// not have InfrastructureReady set to true.
+func IsProvisioning(m *clusterv1.Machine) bool {
+	return m.Status.NodeRef == nil || !m.Status.InfrastructureReady
+}
+
+// IsFailed returns whether the machine has a FailureMessage or a FailureReason.
+func IsFailed(m *clusterv1.Machine) bool {
+	return m.Status.FailureMessage != nil || m.Status.FailureReason != nil
 }

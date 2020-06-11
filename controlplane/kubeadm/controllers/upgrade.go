@@ -34,7 +34,7 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 	kcp *controlplanev1.KubeadmControlPlane,
 	controlPlane *internal.ControlPlane,
 ) (ctrl.Result, error) {
-	logger := controlPlane.Logger()
+	logger := controlPlane.Logger
 
 	// TODO: handle reconciliation of etcd members and kubeadm config in case they get out of sync with cluster
 
@@ -85,13 +85,7 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 		return ctrl.Result{}, errors.Wrap(err, "failed to upgrade kubelet config map")
 	}
 
-	status, err := workloadCluster.ClusterStatus(ctx)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if status.Nodes <= *kcp.Spec.Replicas {
-		// scaleUp ensures that we don't continue scaling up while waiting for Machines to have NodeRefs
+	if controlPlane.NeedsScaleUp() {
 		return r.scaleUpControlPlane(ctx, cluster, kcp, controlPlane)
 	}
 	return r.scaleDownControlPlane(ctx, cluster, kcp, controlPlane)
