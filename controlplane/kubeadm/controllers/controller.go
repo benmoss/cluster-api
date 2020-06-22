@@ -292,22 +292,19 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 	// source ref (reason@machine/name) so the problem can be easily tracked down to its source machine.
 	conditions.SetAggregate(controlPlane.KCP, controlplanev1.MachinesReadyCondition, ownedMachines.ConditionGetters(), conditions.AddSourceRef())
 
-	// Control plane machines rollout due to configuration changes (e.g. upgrades) takes precedence over other operations.
-	needRollout := controlPlane.MachinesNeedingRollout()
-	switch {
-	case len(needRollout) > 0:
-		logger.Info("Rolling out Control Plane machines")
+	if controlPlane.MachinesNeedingRollout().Any() {
 		// NOTE: we are using Status.UpdatedReplicas from the previous reconciliation only to provide a meaningful message
 		// and this does not influence any reconciliation logic.
-		conditions.MarkFalse(controlPlane.KCP, controlplanev1.MachinesSpecUpToDateCondition, controlplanev1.RollingUpdateInProgressReason, clusterv1.ConditionSeverityWarning, "Rolling %d replicas with outdated spec (%d replicas up to date)", len(needRollout), kcp.Status.UpdatedReplicas)
-		return r.upgradeControlPlane(ctx, cluster, kcp, controlPlane)
-	default:
+		conditions.MarkFalse(controlPlane.KCP, controlplanev1.MachinesSpecUpToDateCondition, controlplanev1.RollingUpdateInProgressReason, clusterv1.ConditionSeverityWarning,
+			"Rolling %d replicas with outdated spec (%d replicas up to date)", controlPlane.MachinesNeedingRollout().Len(), kcp.Status.UpdatedReplicas)
+		if err := r.migrateSpecChanges(ctx, controlPlane); err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to roll out control plane")
+		}
+	} else if conditions.Has(controlPlane.KCP, controlplanev1.MachinesSpecUpToDateCondition) {
 		// make sure last upgrade operation is marked as completed.
 		// NOTE: we are checking the condition already exists in order to avoid to set this condition at the first
 		// reconciliation/before a rolling upgrade actually starts.
-		if conditions.Has(controlPlane.KCP, controlplanev1.MachinesSpecUpToDateCondition) {
-			conditions.MarkTrue(controlPlane.KCP, controlplanev1.MachinesSpecUpToDateCondition)
-		}
+		conditions.MarkTrue(controlPlane.KCP, controlplanev1.MachinesSpecUpToDateCondition)
 	}
 
 	if controlPlane.UnhealthyMachines().None() {
@@ -316,7 +313,6 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		}
 	}
 
-	// If we've made it this far, we can assume that all ownedMachines are up to date
 	numMachines := len(ownedMachines)
 	desiredReplicas := int(*kcp.Spec.Replicas)
 
@@ -447,13 +443,6 @@ func (r *KubeadmControlPlaneReconciler) reconcileHealth(ctx context.Context, clu
 		r.recorder.Eventf(kcp, corev1.EventTypeWarning, "ControlPlaneUnhealthy",
 			"Waiting for control plane to pass etcd health check to continue reconciliation: %v", err)
 		return &capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}
-	}
-
-	// We need this check for scale up as well as down to avoid scaling up when there is a machine being deleted.
-	// This should be at the end of this method as no need to wait for machine to be completely deleted to reconcile etcd.
-	// TODO: Revisit during machine remediation implementation which may need to cover other machine phases.
-	if controlPlane.HasDeletingMachine() {
-		return &capierrors.RequeueAfterError{RequeueAfter: deleteRequeueAfter}
 	}
 
 	return nil

@@ -295,28 +295,27 @@ func (c *ControlPlane) NeedsScaleDown() bool {
 		return true
 	}
 	if c.Machines.Len() > int(*c.KCP.Spec.Replicas) {
-		c.Logger.Info("Scale down is required", "existing", c.Machines.Len(), "desired", int(*c.KCP.Spec.Replicas))
 		return true
 	}
 	return false
 }
 
 // NeedsScaleUp returns whether the control plane needs to add a machine to the
-// cluster.  Scale up can be caused by an upgrade, where the cluster will
+// cluster. Scale up can be caused by a rollout, where the cluster will
 // replace outdated machines one by one, or by the more common case of having
 // fewer machines than the number of desired replicas.
 func (c *ControlPlane) NeedsScaleUp() bool {
-	if c.NeedsRollout() {
+	if c.needsReplacementMachine() {
+		c.Logger.Info("Scale up is required because rollout is in progress")
 		return true
 	}
 	if c.Machines.Len() < int(*c.KCP.Spec.Replicas) {
-		c.Logger.Info("Scale up is required", "desired", int(*c.KCP.Spec.Replicas), "existing", c.Machines.Len())
 		return true
 	}
 	return false
 }
 
-func (c *ControlPlane) NeedsRollout() bool {
+func (c *ControlPlane) needsReplacementMachine() bool {
 	return c.MachinesNeedingRollout().Any() && !c.NeedsScaleDown()
 }
 

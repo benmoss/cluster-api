@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/blang/semver"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -244,5 +245,62 @@ func (r *KubeadmControlPlaneReconciler) generateMachine(ctx context.Context, kcp
 	if err := r.Client.Create(ctx, machine); err != nil {
 		return errors.Wrap(err, "Failed to create machine")
 	}
+	return nil
+}
+
+func (r *KubeadmControlPlaneReconciler) migrateSpecChanges(ctx context.Context, controlPlane *internal.ControlPlane) error {
+	logger := controlPlane.Logger
+	kcp := controlPlane.KCP
+	cluster := controlPlane.Cluster
+
+	// TODO: handle reconciliation of etcd members and kubeadm config in case they get out of sync with cluster
+
+	workloadCluster, err := r.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(cluster))
+	if err != nil {
+		logger.Error(err, "failed to get remote client for workload cluster", "cluster key", util.ObjectKey(cluster))
+		return err
+	}
+
+	parsedVersion, err := semver.ParseTolerant(kcp.Spec.Version)
+	if err != nil {
+		return errors.Wrapf(err, "failed to parse kubernetes version %q", kcp.Spec.Version)
+	}
+
+	if err := workloadCluster.ReconcileKubeletRBACRole(ctx, parsedVersion); err != nil {
+		return errors.Wrap(err, "failed to reconcile the remote kubelet RBAC role")
+	}
+
+	if err := workloadCluster.ReconcileKubeletRBACBinding(ctx, parsedVersion); err != nil {
+		return errors.Wrap(err, "failed to reconcile the remote kubelet RBAC binding")
+	}
+
+	// Ensure kubeadm cluster role  & bindings for v1.18+
+	// as per https://github.com/kubernetes/kubernetes/commit/b117a928a6c3f650931bdac02a41fca6680548c4
+	if err := workloadCluster.AllowBootstrapTokensToGetNodes(ctx); err != nil {
+		return errors.Wrap(err, "failed to set role and role binding for kubeadm")
+	}
+
+	if err := workloadCluster.UpdateKubernetesVersionInKubeadmConfigMap(ctx, parsedVersion); err != nil {
+		return errors.Wrap(err, "failed to update the kubernetes version in the kubeadm config map")
+	}
+
+	if kcp.Spec.KubeadmConfigSpec.ClusterConfiguration != nil {
+		imageRepository := kcp.Spec.KubeadmConfigSpec.ClusterConfiguration.ImageRepository
+		if err := workloadCluster.UpdateImageRepositoryInKubeadmConfigMap(ctx, imageRepository); err != nil {
+			return errors.Wrap(err, "failed to update the image repository in the kubeadm config map")
+		}
+	}
+
+	if kcp.Spec.KubeadmConfigSpec.ClusterConfiguration != nil && kcp.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local != nil {
+		meta := kcp.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local.ImageMeta
+		if err := workloadCluster.UpdateEtcdVersionInKubeadmConfigMap(ctx, meta.ImageRepository, meta.ImageTag); err != nil {
+			return errors.Wrap(err, "failed to update the etcd version in the kubeadm config map")
+		}
+	}
+
+	if err := workloadCluster.UpdateKubeletConfigMap(ctx, parsedVersion); err != nil {
+		return errors.Wrap(err, "failed to upgrade kubelet config map")
+	}
+
 	return nil
 }

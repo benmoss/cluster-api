@@ -81,7 +81,7 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	// run upgrade the first time, expect we scale up
 	needingUpgrade := internal.NewFilterableMachineCollectionFromMachineList(initialMachine)
 	controlPlane.Machines = needingUpgrade
-	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, controlPlane)
+	result, err = r.reconcile(context.Background(), cluster, kcp)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	g.Expect(err).To(BeNil())
 	bothMachines := &clusterv1.MachineList{}
@@ -91,7 +91,7 @@ func TestKubeadmControlPlaneReconciler_upgradeControlPlane(t *testing.T) {
 	controlPlane.Machines = internal.NewFilterableMachineCollectionFromMachineList(bothMachines)
 
 	// run upgrade the second time, expect we scale down
-	result, err = r.upgradeControlPlane(context.Background(), cluster, kcp, controlPlane)
+	result, err = r.reconcile(context.Background(), cluster, kcp)
 	g.Expect(err).To(BeNil())
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	finalMachine := &clusterv1.MachineList{}
