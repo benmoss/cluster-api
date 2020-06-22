@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
@@ -149,4 +150,19 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 
 	_, err := r.scaleDownControlPlane(context.Background(), cluster, kcp, controlPlane)
 	g.Expect(err).ToNot(HaveOccurred())
+}
+
+type machineOpt func(*clusterv1.Machine)
+
+func machine(name string, opts ...machineOpt) *clusterv1.Machine {
+	m := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
