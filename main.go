@@ -79,7 +79,7 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// InitFlags initializes the flags.
+// InitFlags the flags.
 func InitFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&metricsAddr, "metrics-addr", ":8080",
 		"The address the metric endpoint binds to.")
