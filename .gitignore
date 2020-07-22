@@ -23,6 +23,7 @@ out
 
 # kubeconfigs
 minikube.kubeconfig
+foo
 
 # Book
 docs/book/book/
