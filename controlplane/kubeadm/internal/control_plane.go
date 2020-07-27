@@ -21,6 +21,7 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apiserver/pkg/storage/names"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
@@ -31,17 +32,25 @@ import (
 // ControlPlane holds business logic around control planes.
 // It should never need to connect to a service, that responsibility lies outside of this struct.
 type ControlPlane struct {
-	KCP      *controlplanev1.KubeadmControlPlane
-	Cluster  *clusterv1.Cluster
-	Machines FilterableMachineCollection
+	KCP            *controlplanev1.KubeadmControlPlane
+	Cluster        *clusterv1.Cluster
+	Machines       FilterableMachineCollection
+	MachineConfigs map[string]*bootstrapv1.KubeadmConfig
+	InfraObjects   map[string]*unstructured.Unstructured
+
+	// ReconciliationTime is the time of the current reconciliation, and should be used for all "now" calculations
+	ReconciliationTime metav1.Time
 }
 
 // NewControlPlane returns an instantiated ControlPlane.
-func NewControlPlane(cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines FilterableMachineCollection) *ControlPlane {
+func NewControlPlane(cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines FilterableMachineCollection, machineConfigs map[string]*bootstrapv1.KubeadmConfig, infraObjects map[string]*unstructured.Unstructured) *ControlPlane {
 	return &ControlPlane{
-		KCP:      kcp,
-		Cluster:  cluster,
-		Machines: ownedMachines,
+		KCP:                kcp,
+		Cluster:            cluster,
+		Machines:           ownedMachines,
+		MachineConfigs:     machineConfigs,
+		InfraObjects:       infraObjects,
+		ReconciliationTime: metav1.Now(),
 	}
 }
 
@@ -115,13 +124,12 @@ func (c *ControlPlane) FailureDomainWithMostMachines(machines FilterableMachineC
 	return PickMost(c, machines)
 }
 
-// FailureDomainWithFewestMachines returns the failure domain with the fewest number of machines.
-// Used when scaling up.
-func (c *ControlPlane) FailureDomainWithFewestMachines() *string {
+// NextFailureDomainForScaleUp returns the failure domain with the fewest number of up-to-date machines.
+func (c *ControlPlane) NextFailureDomainForScaleUp() *string {
 	if len(c.Cluster.Status.FailureDomains.FilterControlPlane()) == 0 {
 		return nil
 	}
-	return PickFewest(c.FailureDomains().FilterControlPlane(), c.Machines)
+	return PickFewest(c.FailureDomains().FilterControlPlane(), c.UpToDateMachines())
 }
 
 // InitialControlPlaneConfig returns a new KubeadmConfigSpec that is to be used for an initializing control plane.
@@ -197,4 +205,24 @@ func (c *ControlPlane) NeedsReplacementNode() bool {
 // HasDeletingMachine returns true if any machine in the control plane is in the process of being deleted.
 func (c *ControlPlane) HasDeletingMachine() bool {
 	return len(c.Machines.Filter(machinefilters.HasDeletionTimestamp)) > 0
+}
+
+// MachinesNeedingRollout return a list of machines that need to be rolled out.
+func (c *ControlPlane) MachinesNeedingRollout() FilterableMachineCollection {
+	// Ignore machines to be deleted.
+	machines := c.Machines.Filter(machinefilters.Not(machinefilters.HasDeletionTimestamp))
+
+	// Return machines if they are scheduled for rollout or if with an outdated configuration.
+	return machines.AnyFilter(
+		// Machines that are scheduled for rollout (KCP.Spec.UpgradeAfter set, the UpgradeAfter deadline is expired, and the machine was created before the deadline).
+		machinefilters.ShouldRolloutAfter(&c.ReconciliationTime, c.KCP.Spec.UpgradeAfter),
+		// Machines that do not match with KCP config.
+		machinefilters.Not(machinefilters.MatchesKCPConfiguration(c.InfraObjects, c.MachineConfigs, c.KCP)),
+	)
+}
+
+// UpToDateMachines returns the machines that are up to date with the control
+// plane's configuration and therefore do not require rollout.
+func (c *ControlPlane) UpToDateMachines() FilterableMachineCollection {
+	return c.Machines.Sub(c.MachinesNeedingRollout())
 }

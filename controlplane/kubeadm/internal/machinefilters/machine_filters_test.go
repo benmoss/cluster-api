@@ -17,7 +17,6 @@ limitations under the License.
 package machinefilters_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -26,13 +25,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func falseFilter(_ *clusterv1.Machine) bool {
@@ -105,32 +102,32 @@ func TestHasDeletionTimestamp(t *testing.T) {
 }
 
 func TestShouldRolloutAfter(t *testing.T) {
-	t.Run("if upgradeAfter is nil, return false", func(t *testing.T) {
+	now := metav1.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)
+	t.Run("if the given time is nil it returns false", func(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{}
-		m.SetCreationTimestamp(metav1.NewTime(time.Now().Add(-2 * time.Hour)))
-		g.Expect(machinefilters.ShouldRolloutAfter(nil)(m)).To(BeFalse())
+		m.SetCreationTimestamp(now)
+		g.Expect(machinefilters.ShouldRolloutAfter(&now, nil)(m)).To(BeFalse())
 	})
-	t.Run("if upgradeAfter is in the future, return false", func(t *testing.T) {
+	t.Run("if upgradeAfter is after now, return false", func(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{}
-		m.SetCreationTimestamp(metav1.NewTime(time.Now().Add(-2 * time.Hour)))
-		upgradeAfter := metav1.NewTime(time.Now().Add(+1 * time.Hour)) // upgrade after in the future
-		g.Expect(machinefilters.ShouldRolloutAfter(&upgradeAfter)(m)).To(BeFalse())
+		upgradeAfter := metav1.NewTime(now.Add(+1 * time.Hour))
+		g.Expect(machinefilters.ShouldRolloutAfter(&now, &upgradeAfter)(m)).To(BeFalse())
 	})
 	t.Run("if upgradeAfter is in the past and the machine was created before upgradeAfter, return true", func(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{}
-		m.SetCreationTimestamp(metav1.NewTime(time.Now().Add(-2 * time.Hour))) // machine was created before upgradeAfter
-		upgradeAfter := metav1.NewTime(time.Now().Add(-1 * time.Hour))         // upgrade after in the past
-		g.Expect(machinefilters.ShouldRolloutAfter(&upgradeAfter)(m)).To(BeTrue())
+		m.SetCreationTimestamp(metav1.NewTime(now.Add(-2 * time.Hour))) // machine was created before upgradeAfter
+		upgradeAfter := metav1.NewTime(now.Add(-1 * time.Hour))         // upgrade after in the past
+		g.Expect(machinefilters.ShouldRolloutAfter(&now, &upgradeAfter)(m)).To(BeTrue())
 	})
 	t.Run("if upgradeAfter is in the past and the machine was created after upgradeAfter, return false", func(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{}
-		m.SetCreationTimestamp(metav1.NewTime(time.Now().Add(+1 * time.Hour))) // machine was created after upgradeAfter
-		upgradeAfter := metav1.NewTime(time.Now().Add(-1 * time.Hour))         // upgrade after in the past
-		g.Expect(machinefilters.ShouldRolloutAfter(&upgradeAfter)(m)).To(BeFalse())
+		m.SetCreationTimestamp(metav1.NewTime(now.Add(+1 * time.Hour))) // machine was created after upgradeAfter
+		upgradeAfter := metav1.NewTime(now.Add(-1 * time.Hour))         // upgrade after in the past
+		g.Expect(machinefilters.ShouldRolloutAfter(&now, &upgradeAfter)(m)).To(BeFalse())
 	})
 }
 
@@ -234,13 +231,12 @@ func TestMatchesTemplateClonedFrom(t *testing.T) {
 	t.Run("nil machine returns false", func(t *testing.T) {
 		g := NewWithT(t)
 		g.Expect(
-			machinefilters.MatchesTemplateClonedFrom(context.TODO(), nil, nil)(nil),
+			machinefilters.MatchesTemplateClonedFrom(nil, nil)(nil),
 		).To(BeFalse())
 	})
 
 	t.Run("returns true if machine not found", func(t *testing.T) {
 		g := NewWithT(t)
-		client := fake.NewFakeClient()
 		kcp := &controlplanev1.KubeadmControlPlane{}
 		machine := &clusterv1.Machine{
 			Spec: clusterv1.MachineSpec{
@@ -253,7 +249,7 @@ func TestMatchesTemplateClonedFrom(t *testing.T) {
 			},
 		}
 		g.Expect(
-			machinefilters.MatchesTemplateClonedFrom(context.TODO(), client, kcp)(machine),
+			machinefilters.MatchesTemplateClonedFrom(map[string]*unstructured.Unstructured{}, kcp)(machine),
 		).To(BeTrue())
 	})
 }
@@ -321,22 +317,21 @@ func TestMatchesTemplateClonedFrom_WithClonedFromAnnotations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			infraConfig := unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"kind":       "InfrastructureMachine",
-					"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
-					"metadata": map[string]interface{}{
-						"name":        "infra-config1",
-						"namespace":   "default",
-						"annotations": tt.annotations,
+			infraConfigs := map[string]*unstructured.Unstructured{
+				machine.Name: {
+					Object: map[string]interface{}{
+						"kind":       "InfrastructureMachine",
+						"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+						"metadata": map[string]interface{}{
+							"name":        "infra-config1",
+							"namespace":   "default",
+							"annotations": tt.annotations,
+						},
 					},
 				},
 			}
-			scheme := runtime.NewScheme()
-			client := fake.NewFakeClientWithScheme(scheme, &infraConfig)
-
 			g.Expect(
-				machinefilters.MatchesTemplateClonedFrom(context.TODO(), client, kcp)(machine),
+				machinefilters.MatchesTemplateClonedFrom(infraConfigs, kcp)(machine),
 			).To(Equal(tt.expectMatch))
 		})
 	}

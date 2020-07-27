@@ -33,7 +33,6 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/external"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
 	capierrors "sigs.k8s.io/cluster-api/errors"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/certs"
@@ -256,16 +255,36 @@ func (r *KubeadmControlPlaneReconciler) generateMachine(ctx context.Context, kcp
 	return nil
 }
 
-// machinesNeedingRollout return a list of machines that need to be rolled out.
-func (r *KubeadmControlPlaneReconciler) machinesNeedingRollout(ctx context.Context, c *internal.ControlPlane) internal.FilterableMachineCollection {
-	// Ignore machines to be deleted.
-	machines := c.Machines.Filter(machinefilters.Not(machinefilters.HasDeletionTimestamp))
+func (r *KubeadmControlPlaneReconciler) getInfraObjects(ctx context.Context, machines internal.FilterableMachineCollection) (map[string]*unstructured.Unstructured, error) {
+	result := map[string]*unstructured.Unstructured{}
+	for _, m := range machines {
+		infraObj, err := external.Get(ctx, r.Client, &m.Spec.InfrastructureRef, m.Namespace)
+		if err != nil {
+			if apierrors.IsNotFound(errors.Cause(err)) {
+				continue
+			}
+			return nil, errors.Wrapf(err, "failed to retrieve infra obj for machine %q", m.Name)
+		}
+		result[m.Name] = infraObj
+	}
+	return result, nil
+}
 
-	// Return machines if they are scheduled for rollout or if with an outdated configuration.
-	return machines.AnyFilter(
-		// Machines that are scheduled for rollout (KCP.Spec.UpgradeAfter set, the UpgradeAfter deadline is expired, and the machine was created before the deadline).
-		machinefilters.ShouldRolloutAfter(c.KCP.Spec.UpgradeAfter),
-		// Machines that do not match with KCP config.
-		machinefilters.Not(machinefilters.MatchesKCPConfiguration(ctx, r.Client, c.KCP)),
-	)
+func (r *KubeadmControlPlaneReconciler) getMachineConfigs(ctx context.Context, machines internal.FilterableMachineCollection) (map[string]*bootstrapv1.KubeadmConfig, error) {
+	result := map[string]*bootstrapv1.KubeadmConfig{}
+	for _, m := range machines {
+		bootstrapRef := m.Spec.Bootstrap.ConfigRef
+		if bootstrapRef == nil {
+			continue
+		}
+		machineConfig := &bootstrapv1.KubeadmConfig{}
+		if err := r.Client.Get(ctx, client.ObjectKey{Name: bootstrapRef.Name, Namespace: m.Namespace}, machineConfig); err != nil {
+			if apierrors.IsNotFound(errors.Cause(err)) {
+				continue
+			}
+			return nil, errors.Wrapf(err, "failed to retrieve bootstrap config for machine %q", m.Name)
+		}
+		result[m.Name] = machineConfig
+	}
+	return result, nil
 }
