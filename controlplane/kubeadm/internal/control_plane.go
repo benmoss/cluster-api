@@ -17,41 +17,54 @@ limitations under the License.
 package internal
 
 import (
+	"context"
+
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apiserver/pkg/storage/names"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/controllers/external"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ControlPlane holds business logic around control planes.
 // It should never need to connect to a service, that responsibility lies outside of this struct.
 type ControlPlane struct {
-	KCP            *controlplanev1.KubeadmControlPlane
-	Cluster        *clusterv1.Cluster
-	Machines       FilterableMachineCollection
-	MachineConfigs map[string]*bootstrapv1.KubeadmConfig
-	InfraObjects   map[string]*unstructured.Unstructured
+	KCP      *controlplanev1.KubeadmControlPlane
+	Cluster  *clusterv1.Cluster
+	Machines FilterableMachineCollection
 
-	// ReconciliationTime is the time of the current reconciliation, and should be used for all "now" calculations
-	ReconciliationTime metav1.Time
+	// reconciliationTime is the time of the current reconciliation, and should be used for all "now" calculations
+	reconciliationTime metav1.Time
+	kubeadmConfigs     map[string]*bootstrapv1.KubeadmConfig
+	infraResources     map[string]*unstructured.Unstructured
 }
 
 // NewControlPlane returns an instantiated ControlPlane.
-func NewControlPlane(cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines FilterableMachineCollection, machineConfigs map[string]*bootstrapv1.KubeadmConfig, infraObjects map[string]*unstructured.Unstructured) *ControlPlane {
+func NewControlPlane(ctx context.Context, client client.Client, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines FilterableMachineCollection) (*ControlPlane, error) {
+	infraObjects, err := getInfraResources(ctx, client, ownedMachines)
+	if err != nil {
+		return nil, err
+	}
+	kubeadmConfigs, err := getKubeadmConfigs(ctx, client, ownedMachines)
+	if err != nil {
+		return nil, err
+	}
 	return &ControlPlane{
 		KCP:                kcp,
 		Cluster:            cluster,
 		Machines:           ownedMachines,
-		MachineConfigs:     machineConfigs,
-		InfraObjects:       infraObjects,
-		ReconciliationTime: metav1.Now(),
-	}
+		kubeadmConfigs:     kubeadmConfigs,
+		infraResources:     infraObjects,
+		reconciliationTime: metav1.Now(),
+	}, nil
 }
 
 // Logger returns a logger with useful context.
@@ -215,9 +228,9 @@ func (c *ControlPlane) MachinesNeedingRollout() FilterableMachineCollection {
 	// Return machines if they are scheduled for rollout or if with an outdated configuration.
 	return machines.AnyFilter(
 		// Machines that are scheduled for rollout (KCP.Spec.UpgradeAfter set, the UpgradeAfter deadline is expired, and the machine was created before the deadline).
-		machinefilters.ShouldRolloutAfter(&c.ReconciliationTime, c.KCP.Spec.UpgradeAfter),
+		machinefilters.ShouldRolloutAfter(&c.reconciliationTime, c.KCP.Spec.UpgradeAfter),
 		// Machines that do not match with KCP config.
-		machinefilters.Not(machinefilters.MatchesKCPConfiguration(c.InfraObjects, c.MachineConfigs, c.KCP)),
+		machinefilters.Not(machinefilters.MatchesKCPConfiguration(c.infraResources, c.kubeadmConfigs, c.KCP)),
 	)
 }
 
@@ -225,4 +238,40 @@ func (c *ControlPlane) MachinesNeedingRollout() FilterableMachineCollection {
 // plane's configuration and therefore do not require rollout.
 func (c *ControlPlane) UpToDateMachines() FilterableMachineCollection {
 	return c.Machines.Difference(c.MachinesNeedingRollout())
+}
+
+// getInfraResources fetches the external infrastructure resource for each machine in the collection and returns a map of machine.Name -> infraResource.
+func getInfraResources(ctx context.Context, cl client.Client, machines FilterableMachineCollection) (map[string]*unstructured.Unstructured, error) {
+	result := map[string]*unstructured.Unstructured{}
+	for _, m := range machines {
+		infraObj, err := external.Get(ctx, cl, &m.Spec.InfrastructureRef, m.Namespace)
+		if err != nil {
+			if apierrors.IsNotFound(errors.Cause(err)) {
+				continue
+			}
+			return nil, errors.Wrapf(err, "failed to retrieve infra obj for machine %q", m.Name)
+		}
+		result[m.Name] = infraObj
+	}
+	return result, nil
+}
+
+// getInfraResources fetches the kubeadm config for each machine in the collection and returns a map of machine.Name -> KubeadmConfig.
+func getKubeadmConfigs(ctx context.Context, cl client.Client, machines FilterableMachineCollection) (map[string]*bootstrapv1.KubeadmConfig, error) {
+	result := map[string]*bootstrapv1.KubeadmConfig{}
+	for _, m := range machines {
+		bootstrapRef := m.Spec.Bootstrap.ConfigRef
+		if bootstrapRef == nil {
+			continue
+		}
+		machineConfig := &bootstrapv1.KubeadmConfig{}
+		if err := cl.Get(ctx, client.ObjectKey{Name: bootstrapRef.Name, Namespace: m.Namespace}, machineConfig); err != nil {
+			if apierrors.IsNotFound(errors.Cause(err)) {
+				continue
+			}
+			return nil, errors.Wrapf(err, "failed to retrieve bootstrap config for machine %q", m.Name)
+		}
+		result[m.Name] = machineConfig
+	}
+	return result, nil
 }

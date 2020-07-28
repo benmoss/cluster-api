@@ -282,17 +282,11 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		return ctrl.Result{}, nil
 	}
 
-	infraObjs, err := r.getInfraResources(ctx, ownedMachines)
+	controlPlane, err := internal.NewControlPlane(ctx, r.Client, cluster, kcp, ownedMachines)
 	if err != nil {
-		logger.Error(err, "failed to retrieve infra objects")
+		logger.Error(err, "failed to initialize control plane")
 		return ctrl.Result{}, err
 	}
-	machineConfigs, err := r.getKubeadmConfigs(ctx, ownedMachines)
-	if err != nil {
-		logger.Error(err, "failed to retrieve bootstrap machine configs")
-		return ctrl.Result{}, err
-	}
-	controlPlane := internal.NewControlPlane(cluster, kcp, ownedMachines, machineConfigs, infraObjs)
 
 	// Aggregate the operational state of all the machines; while aggregating we are adding the
 	// source ref (reason@machine/name) so the problem can be easily tracked down to its source machine.

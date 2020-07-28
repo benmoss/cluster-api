@@ -254,37 +254,3 @@ func (r *KubeadmControlPlaneReconciler) generateMachine(ctx context.Context, kcp
 	}
 	return nil
 }
-
-func (r *KubeadmControlPlaneReconciler) getInfraResources(ctx context.Context, machines internal.FilterableMachineCollection) (map[string]*unstructured.Unstructured, error) {
-	result := map[string]*unstructured.Unstructured{}
-	for _, m := range machines {
-		infraObj, err := external.Get(ctx, r.Client, &m.Spec.InfrastructureRef, m.Namespace)
-		if err != nil {
-			if apierrors.IsNotFound(errors.Cause(err)) {
-				continue
-			}
-			return nil, errors.Wrapf(err, "failed to retrieve infra obj for machine %q", m.Name)
-		}
-		result[m.Name] = infraObj
-	}
-	return result, nil
-}
-
-func (r *KubeadmControlPlaneReconciler) getKubeadmConfigs(ctx context.Context, machines internal.FilterableMachineCollection) (map[string]*bootstrapv1.KubeadmConfig, error) {
-	result := map[string]*bootstrapv1.KubeadmConfig{}
-	for _, m := range machines {
-		bootstrapRef := m.Spec.Bootstrap.ConfigRef
-		if bootstrapRef == nil {
-			continue
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{}
-		if err := r.Client.Get(ctx, client.ObjectKey{Name: bootstrapRef.Name, Namespace: m.Namespace}, machineConfig); err != nil {
-			if apierrors.IsNotFound(errors.Cause(err)) {
-				continue
-			}
-			return nil, errors.Wrapf(err, "failed to retrieve bootstrap config for machine %q", m.Name)
-		}
-		result[m.Name] = machineConfig
-	}
-	return result, nil
-}
