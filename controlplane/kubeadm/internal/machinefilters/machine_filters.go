@@ -150,17 +150,14 @@ func IsReady() Func {
 	}
 }
 
-// ShouldRolloutAfter returns a filter to find all machines
-// that should rollout after the given time.
-func ShouldRolloutAfter(now, upgradeAfter *metav1.Time) Func {
+// ShouldRolloutAfter returns a filter to find all machines where
+// CreationTimestamp < rolloutAfter < reconciliationTIme
+func ShouldRolloutAfter(reconciliationTime, rolloutAfter *metav1.Time) Func {
 	return func(machine *clusterv1.Machine) bool {
 		if machine == nil {
 			return false
 		}
-		if upgradeAfter == nil || !upgradeAfter.Before(now) {
-			return false
-		}
-		return machine.CreationTimestamp.Before(upgradeAfter)
+		return machine.CreationTimestamp.Before(rolloutAfter) && rolloutAfter.Before(reconciliationTime)
 	}
 }
 

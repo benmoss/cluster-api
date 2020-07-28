@@ -102,32 +102,40 @@ func TestHasDeletionTimestamp(t *testing.T) {
 }
 
 func TestShouldRolloutAfter(t *testing.T) {
-	now := metav1.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)
-	t.Run("if the given time is nil it returns false", func(t *testing.T) {
+	reconciliationTime := metav1.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)
+	t.Run("if the machine is nil it returns false", func(t *testing.T) {
 		g := NewWithT(t)
-		m := &clusterv1.Machine{}
-		m.SetCreationTimestamp(now)
-		g.Expect(machinefilters.ShouldRolloutAfter(&now, nil)(m)).To(BeFalse())
+		g.Expect(machinefilters.ShouldRolloutAfter(&reconciliationTime, &reconciliationTime)(nil)).To(BeFalse())
 	})
-	t.Run("if upgradeAfter is after now, return false", func(t *testing.T) {
+	t.Run("if the reconciliationTime is nil it returns false", func(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{}
-		upgradeAfter := metav1.NewTime(now.Add(+1 * time.Hour))
-		g.Expect(machinefilters.ShouldRolloutAfter(&now, &upgradeAfter)(m)).To(BeFalse())
+		g.Expect(machinefilters.ShouldRolloutAfter(nil, &reconciliationTime)(m)).To(BeFalse())
 	})
-	t.Run("if upgradeAfter is in the past and the machine was created before upgradeAfter, return true", func(t *testing.T) {
+	t.Run("if the rolloutAfter is nil it returns false", func(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{}
-		m.SetCreationTimestamp(metav1.NewTime(now.Add(-2 * time.Hour))) // machine was created before upgradeAfter
-		upgradeAfter := metav1.NewTime(now.Add(-1 * time.Hour))         // upgrade after in the past
-		g.Expect(machinefilters.ShouldRolloutAfter(&now, &upgradeAfter)(m)).To(BeTrue())
+		g.Expect(machinefilters.ShouldRolloutAfter(&reconciliationTime, nil)(m)).To(BeFalse())
 	})
-	t.Run("if upgradeAfter is in the past and the machine was created after upgradeAfter, return false", func(t *testing.T) {
+	t.Run("if rolloutAfter is after the reconciliation time, return false", func(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{}
-		m.SetCreationTimestamp(metav1.NewTime(now.Add(+1 * time.Hour))) // machine was created after upgradeAfter
-		upgradeAfter := metav1.NewTime(now.Add(-1 * time.Hour))         // upgrade after in the past
-		g.Expect(machinefilters.ShouldRolloutAfter(&now, &upgradeAfter)(m)).To(BeFalse())
+		rolloutAfter := metav1.NewTime(reconciliationTime.Add(+1 * time.Hour))
+		g.Expect(machinefilters.ShouldRolloutAfter(&reconciliationTime, &rolloutAfter)(m)).To(BeFalse())
+	})
+	t.Run("if rolloutAfter is before the reconciliation time and the machine was created before rolloutAfter, return true", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		m.SetCreationTimestamp(metav1.NewTime(reconciliationTime.Add(-2 * time.Hour)))
+		rolloutAfter := metav1.NewTime(reconciliationTime.Add(-1 * time.Hour))
+		g.Expect(machinefilters.ShouldRolloutAfter(&reconciliationTime, &rolloutAfter)(m)).To(BeTrue())
+	})
+	t.Run("if rolloutAfter is before the reconciliation time and the machine was created after rolloutAfter, return false", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		m.SetCreationTimestamp(metav1.NewTime(reconciliationTime.Add(+1 * time.Hour)))
+		rolloutAfter := metav1.NewTime(reconciliationTime.Add(-1 * time.Hour))
+		g.Expect(machinefilters.ShouldRolloutAfter(&reconciliationTime, &rolloutAfter)(m)).To(BeFalse())
 	})
 }
 

@@ -40,11 +40,11 @@ func (r *KubeadmControlPlaneReconciler) updateStatus(ctx context.Context, kcp *c
 		return errors.Wrap(err, "failed to get list of owned machines")
 	}
 
-	infraObjs, err := r.getInfraObjects(ctx, ownedMachines)
+	infraObjs, err := r.getInfraResources(ctx, ownedMachines)
 	if err != nil {
 		return errors.Wrap(err, "failed to get infrastructure objects")
 	}
-	machineConfigs, err := r.getMachineConfigs(ctx, ownedMachines)
+	machineConfigs, err := r.getKubeadmConfigs(ctx, ownedMachines)
 	if err != nil {
 		return errors.Wrap(err, "failed to get bootstrap machine configurations")
 	}

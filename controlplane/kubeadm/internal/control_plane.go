@@ -224,5 +224,5 @@ func (c *ControlPlane) MachinesNeedingRollout() FilterableMachineCollection {
 // UpToDateMachines returns the machines that are up to date with the control
 // plane's configuration and therefore do not require rollout.
 func (c *ControlPlane) UpToDateMachines() FilterableMachineCollection {
-	return c.Machines.Sub(c.MachinesNeedingRollout())
+	return c.Machines.Difference(c.MachinesNeedingRollout())
 }

@@ -65,8 +65,8 @@ func (s FilterableMachineCollection) Insert(machines ...*clusterv1.Machine) {
 	}
 }
 
-// Sub returns a copy without machines that are in the given collection
-func (s FilterableMachineCollection) Sub(machines FilterableMachineCollection) FilterableMachineCollection {
+// Difference returns a copy without machines that are in the given collection
+func (s FilterableMachineCollection) Difference(machines FilterableMachineCollection) FilterableMachineCollection {
 	return s.Filter(func(m *clusterv1.Machine) bool {
 		_, found := machines[m.Name]
 		return !found

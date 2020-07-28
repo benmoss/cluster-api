@@ -282,12 +282,12 @@ func (r *KubeadmControlPlaneReconciler) reconcile(ctx context.Context, cluster *
 		return ctrl.Result{}, nil
 	}
 
-	infraObjs, err := r.getInfraObjects(ctx, ownedMachines)
+	infraObjs, err := r.getInfraResources(ctx, ownedMachines)
 	if err != nil {
 		logger.Error(err, "failed to retrieve infra objects")
 		return ctrl.Result{}, err
 	}
-	machineConfigs, err := r.getMachineConfigs(ctx, ownedMachines)
+	machineConfigs, err := r.getKubeadmConfigs(ctx, ownedMachines)
 	if err != nil {
 		logger.Error(err, "failed to retrieve bootstrap machine configs")
 		return ctrl.Result{}, err

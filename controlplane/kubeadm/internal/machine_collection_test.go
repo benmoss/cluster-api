@@ -51,16 +51,23 @@ var _ = Describe("Machine Collection", func() {
 				Expect(sortedMachines[len(sortedMachines)-1].Name).To(Equal("machine-5"))
 			})
 		})
-		Describe("Sub", func() {
+		Describe("Difference", func() {
 			It("returns the collection with elements of the second collection removed", func() {
 				c2 := collection.Filter(func(m *clusterv1.Machine) bool {
 					return m.Name != "machine-1"
 				})
-				c3 := collection.Sub(c2)
+				c3 := collection.Difference(c2)
 
 				// does not mutate
 				Expect(collection.Names()).To(ContainElement("machine-1"))
 				Expect(c3.Names()).To(ConsistOf("machine-1"))
+			})
+		})
+
+		Describe("Names", func() {
+			It("returns a slice of names of each machine in the collection", func() {
+				Expect(NewFilterableMachineCollection().Names()).To(BeEmpty())
+				Expect(NewFilterableMachineCollection(machine("1"), machine("2")).Names()).To(ConsistOf("1", "2"))
 			})
 		})
 	})

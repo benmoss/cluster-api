@@ -255,7 +255,7 @@ func (r *KubeadmControlPlaneReconciler) generateMachine(ctx context.Context, kcp
 	return nil
 }
 
-func (r *KubeadmControlPlaneReconciler) getInfraObjects(ctx context.Context, machines internal.FilterableMachineCollection) (map[string]*unstructured.Unstructured, error) {
+func (r *KubeadmControlPlaneReconciler) getInfraResources(ctx context.Context, machines internal.FilterableMachineCollection) (map[string]*unstructured.Unstructured, error) {
 	result := map[string]*unstructured.Unstructured{}
 	for _, m := range machines {
 		infraObj, err := external.Get(ctx, r.Client, &m.Spec.InfrastructureRef, m.Namespace)
@@ -270,7 +270,7 @@ func (r *KubeadmControlPlaneReconciler) getInfraObjects(ctx context.Context, mac
 	return result, nil
 }
 
-func (r *KubeadmControlPlaneReconciler) getMachineConfigs(ctx context.Context, machines internal.FilterableMachineCollection) (map[string]*bootstrapv1.KubeadmConfig, error) {
+func (r *KubeadmControlPlaneReconciler) getKubeadmConfigs(ctx context.Context, machines internal.FilterableMachineCollection) (map[string]*bootstrapv1.KubeadmConfig, error) {
 	result := map[string]*bootstrapv1.KubeadmConfig{}
 	for _, m := range machines {
 		bootstrapRef := m.Spec.Bootstrap.ConfigRef
