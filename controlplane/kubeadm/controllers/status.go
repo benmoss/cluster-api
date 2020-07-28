@@ -22,6 +22,7 @@ import (
 	"github.com/pkg/errors"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -40,16 +41,13 @@ func (r *KubeadmControlPlaneReconciler) updateStatus(ctx context.Context, kcp *c
 		return errors.Wrap(err, "failed to get list of owned machines")
 	}
 
-	infraObjs, err := r.getInfraResources(ctx, ownedMachines)
+	logger := r.Log.WithValues("namespace", kcp.Namespace, "kubeadmControlPlane", kcp.Name, "cluster", cluster.Name)
+	controlPlane, err := internal.NewControlPlane(ctx, r.Client, cluster, kcp, ownedMachines)
 	if err != nil {
-		return errors.Wrap(err, "failed to get infrastructure objects")
+		logger.Error(err, "failed to initialize control plane")
+		return err
 	}
-	machineConfigs, err := r.getKubeadmConfigs(ctx, ownedMachines)
-	if err != nil {
-		return errors.Wrap(err, "failed to get bootstrap machine configurations")
-	}
-	currentMachines := ownedMachines.Filter(machinefilters.MatchesKCPConfiguration(infraObjs, machineConfigs, kcp))
-	kcp.Status.UpdatedReplicas = int32(len(currentMachines))
+	kcp.Status.UpdatedReplicas = int32(len(controlPlane.UpToDateMachines()))
 
 	replicas := int32(len(ownedMachines))
 	desiredReplicas := *kcp.Spec.Replicas
