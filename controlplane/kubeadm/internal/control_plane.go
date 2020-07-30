@@ -39,30 +39,39 @@ import (
 type ControlPlane struct {
 	KCP      *controlplanev1.KubeadmControlPlane
 	Cluster  *clusterv1.Cluster
-	Machines FilterableMachineCollection
+	Machines MachineCollection
 
 	// reconciliationTime is the time of the current reconciliation, and should be used for all "now" calculations
 	reconciliationTime metav1.Time
-	kubeadmConfigs     map[string]*bootstrapv1.KubeadmConfig
-	infraResources     map[string]*unstructured.Unstructured
+	// kubeadmConfigs     map[string]*bootstrapv1.KubeadmConfig
+	// infraResources     map[string]*unstructured.Unstructured
 }
 
 // NewControlPlane returns an instantiated ControlPlane.
-func NewControlPlane(ctx context.Context, client client.Client, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines FilterableMachineCollection) (*ControlPlane, error) {
-	infraObjects, err := getInfraResources(ctx, client, ownedMachines)
-	if err != nil {
-		return nil, err
-	}
-	kubeadmConfigs, err := getKubeadmConfigs(ctx, client, ownedMachines)
-	if err != nil {
-		return nil, err
+func NewControlPlane(ctx context.Context, cl client.Client, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines FilterableMachineCollection) (*ControlPlane, error) {
+	var machines MachineCollection
+	for _, m := range ownedMachines {
+		infraObj, err := getInfraResource(ctx, cl, m)
+		if err != nil && !apierrors.IsNotFound(errors.Cause(err)) {
+			return nil, errors.Wrapf(err, "failed to retrieve infra obj for machine %q", m.Name)
+		}
+
+		machineConfig, err := getKubeadmConfig(ctx, cl, m)
+		if err != nil && !apierrors.IsNotFound(errors.Cause(err)) {
+			return nil, errors.Wrapf(err, "failed to retrieve bootstrap config for machine %q", m.Name)
+		}
+
+		machines = append(machines, &Machine{
+			Machine:       m,
+			InfraMachine:  infraObj,
+			KubeadmConfig: machineConfig,
+		})
+
 	}
 	return &ControlPlane{
 		KCP:                kcp,
 		Cluster:            cluster,
-		Machines:           ownedMachines,
-		kubeadmConfigs:     kubeadmConfigs,
-		infraResources:     infraObjects,
+		Machines:           machines,
 		reconciliationTime: metav1.Now(),
 	}, nil
 }
@@ -222,16 +231,21 @@ func (c *ControlPlane) HasDeletingMachine() bool {
 
 // MachinesNeedingRollout return a list of machines that need to be rolled out.
 func (c *ControlPlane) MachinesNeedingRollout() FilterableMachineCollection {
-	// Ignore machines to be deleted.
-	machines := c.Machines.Filter(machinefilters.Not(machinefilters.HasDeletionTimestamp))
+	result := FilterableMachineCollection{}
+	for _, machine := range c.Machines {
+		if machine.Machine.DeletionTimestamp != nil {
+			continue
+		}
+		if machinefilters.ShouldRolloutAfter(&c.reconciliationTime, c.KCP.Spec.UpgradeAfter, machine.Machine) {
+			result.Insert(machine.Machine)
+			continue
+		}
+		if !machinefilters.MatchesKCPConfiguration(machine.InfraMachine, machine.KubeadmConfig, c.KCP, machine.Machine) {
+			result.Insert(machine.Machine)
+		}
+	}
 
-	// Return machines if they are scheduled for rollout or if with an outdated configuration.
-	return machines.AnyFilter(
-		// Machines that are scheduled for rollout (KCP.Spec.UpgradeAfter set, the UpgradeAfter deadline is expired, and the machine was created before the deadline).
-		machinefilters.ShouldRolloutAfter(&c.reconciliationTime, c.KCP.Spec.UpgradeAfter),
-		// Machines that do not match with KCP config.
-		machinefilters.Not(machinefilters.MatchesKCPConfiguration(c.infraResources, c.kubeadmConfigs, c.KCP)),
-	)
+	return result
 }
 
 // UpToDateMachines returns the machines that are up to date with the control
@@ -240,38 +254,24 @@ func (c *ControlPlane) UpToDateMachines() FilterableMachineCollection {
 	return c.Machines.Difference(c.MachinesNeedingRollout())
 }
 
-// getInfraResources fetches the external infrastructure resource for each machine in the collection and returns a map of machine.Name -> infraResource.
-func getInfraResources(ctx context.Context, cl client.Client, machines FilterableMachineCollection) (map[string]*unstructured.Unstructured, error) {
-	result := map[string]*unstructured.Unstructured{}
-	for _, m := range machines {
-		infraObj, err := external.Get(ctx, cl, &m.Spec.InfrastructureRef, m.Namespace)
-		if err != nil {
-			if apierrors.IsNotFound(errors.Cause(err)) {
-				continue
-			}
-			return nil, errors.Wrapf(err, "failed to retrieve infra obj for machine %q", m.Name)
-		}
-		result[m.Name] = infraObj
+// getInfraResources fetches the external infrastructure resource for a machine
+func getInfraResource(ctx context.Context, cl client.Client, machine *clusterv1.Machine) (*unstructured.Unstructured, error) {
+	infraObj, err := external.Get(ctx, cl, &machine.Spec.InfrastructureRef, machine.Namespace)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to retrieve infra obj for machine %q", machine.Name)
 	}
-	return result, nil
+	return infraObj, nil
 }
 
-// getInfraResources fetches the kubeadm config for each machine in the collection and returns a map of machine.Name -> KubeadmConfig.
-func getKubeadmConfigs(ctx context.Context, cl client.Client, machines FilterableMachineCollection) (map[string]*bootstrapv1.KubeadmConfig, error) {
-	result := map[string]*bootstrapv1.KubeadmConfig{}
-	for _, m := range machines {
-		bootstrapRef := m.Spec.Bootstrap.ConfigRef
-		if bootstrapRef == nil {
-			continue
-		}
-		machineConfig := &bootstrapv1.KubeadmConfig{}
-		if err := cl.Get(ctx, client.ObjectKey{Name: bootstrapRef.Name, Namespace: m.Namespace}, machineConfig); err != nil {
-			if apierrors.IsNotFound(errors.Cause(err)) {
-				continue
-			}
-			return nil, errors.Wrapf(err, "failed to retrieve bootstrap config for machine %q", m.Name)
-		}
-		result[m.Name] = machineConfig
+// getInfraResources fetches the kubeadm config for a machine
+func getKubeadmConfig(ctx context.Context, cl client.Client, machine *clusterv1.Machine) (*bootstrapv1.KubeadmConfig, error) {
+	bootstrapRef := machine.Spec.Bootstrap.ConfigRef
+	if bootstrapRef == nil {
+		return nil, nil
 	}
-	return result, nil
+	machineConfig := &bootstrapv1.KubeadmConfig{}
+	if err := cl.Get(ctx, client.ObjectKey{Name: bootstrapRef.Name, Namespace: machine.Namespace}, machineConfig); err != nil {
+		return nil, errors.Wrapf(err, "failed to retrieve bootstrap config for machine %q", machine.Name)
+	}
+	return machineConfig, nil
 }

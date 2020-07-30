@@ -65,14 +65,6 @@ func (s FilterableMachineCollection) Insert(machines ...*clusterv1.Machine) {
 	}
 }
 
-// Difference returns a copy without machines that are in the given collection
-func (s FilterableMachineCollection) Difference(machines FilterableMachineCollection) FilterableMachineCollection {
-	return s.Filter(func(m *clusterv1.Machine) bool {
-		_, found := machines[m.Name]
-		return !found
-	})
-}
-
 // SortedByCreationTimestamp returns the machines sorted by creation timestamp
 func (s FilterableMachineCollection) SortedByCreationTimestamp() []*clusterv1.Machine {
 	res := make(util.MachinesByCreationTimestamp, 0, len(s))
