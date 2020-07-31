@@ -29,12 +29,12 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog"
-	"k8s.io/klog/klogr"
 	clusterv1alpha3 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	kubeadmbootstrapv1alpha3 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/version"
 	kubeadmcontrolplanev1alpha3 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	kubeadmcontrolplanecontrollers "sigs.k8s.io/cluster-api/controlplane/kubeadm/controllers"
+	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -109,7 +109,7 @@ func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	pflag.Parse()
 
-	ctrl.SetLogger(klogr.New())
+	ctrl.SetLogger(util.NewLogger())
 
 	if profilerAddress != "" {
 		klog.Infof("Profiler listening for requests at %s", profilerAddress)

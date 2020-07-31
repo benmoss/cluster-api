@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog"
-	"k8s.io/klog/klogr"
 	clusterv1alpha2 "sigs.k8s.io/cluster-api/api/v1alpha2"
 	clusterv1alpha3 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/version"
@@ -145,7 +144,7 @@ func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	pflag.Parse()
 
-	ctrl.SetLogger(klogr.New())
+	ctrl.SetLogger(util.NewLogger())
 
 	if profilerAddress != "" {
 		klog.Infof("Profiler listening for requests at %s", profilerAddress)
